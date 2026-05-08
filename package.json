@@ -1,0 +1,44 @@
+{
+  "name": "sister-poc-worker-a",
+  "version": "1.0.0",
+  "description": "Worker A — Local HTTP + WebSocket Bridge Server. Sister PoC research artifact for Anthropic HackerOne VDP only.",
+  "main": "worker_a.js",
+  "scripts": {
+    "start":   "node worker_a.js",
+    "start:8787": "PORT=8787 node worker_a.js",
+    "start:8788": "PORT=8788 node worker_a.js",
+    "check":   "node --check worker_a.js && echo 'Syntax OK'",
+    "test:smoke": "node -e \"const h=require('http');let d='';const r=h.get('http://127.0.0.1:'+process.env.PORT,'8787','/health',res=>{res.on('data',c=>d+=c);res.on('end',()=>{const j=JSON.parse(d);if(j.status==='ok')console.log('Smoke test PASS');else{console.error('Smoke test FAIL',j);process.exit(1);}});});r.on('error',e=>{console.error('Server not running:',e.message);process.exit(1);});\""
+  },
+  "keywords": [
+    "anthropic",
+    "hackerone",
+    "vdp",
+    "security-research",
+    "sister-poc",
+    "worker-a"
+  ],
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.17.1"
+  },
+  "devDependencies": {},
+  "notes": {
+    "purpose": "HackerOne VDP research artifact only. Not for distribution. Single-operator localhost.",
+    "blocked_hosts": [
+      "api.anthropic.com",
+      "console.anthropic.com",
+      "platform.claude.com",
+      "openclaude.111724.xyz",
+      "cfc.aroic.workers.dev"
+    ],
+    "install": "npm install",
+    "run": "node worker_a.js",
+    "setup_url": "http://127.0.0.1:8787/setup",
+    "ws_url": "ws://127.0.0.1:8787/ws"
+  }
+}
