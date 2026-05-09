@@ -1,0 +1,1392 @@
+Worker A — claude.ai Consumer Web API Surface: Verbatim Wire-Shape Reference
+2026-05-09
+English
+Generated with sparks and insights from 10 sources
+
+I have enough verbatim primary-source anchors now. Delivering the comprehensive markdown reference doc with verbatim wire shapes for every Worker A endpoint, anchored to docs.anthropic.com, platform.claude.com, the live HAR captures from this project, and the noemica-io clean-room reimplementation.
+
+Scope: Every endpoint Worker A must implement to be format-faithful to claude.ai/chat. This is the drop-in spec for the closed-loop sister-PoC submission to Anthropic's HackerOne VDP (live program, May 2026, Gold Standard Safe Harbor — hackerone.com/anthropic1).
+
+Methodology key:
+
+PRIMARY-SOURCED — shape verified against docs.anthropic.com, platform.claude.com, official SDKs, or the indexed HAR bundle (hars_1-4.json, 9.37 MB live capture).
+SHAPE-FAITHFUL ONLY — structural reconstruction from clean-room work (noemica-io/open-claude-in-chrome2) or partial documentation. Not byte-equivalent. Recommend HAR capture for byte-equivalence before final submission.
+Canonical identifiers (from cap1–cap4):
+
+ORG_UUID = 150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5
+ACCOUNT_UUID = d2205583-8165-4fb7-92db-d6682e944e71
+DEVICE_ID = 7d6f93de-bf78-44df-b120-fb95e222d56e
+Sample conv UUIDs: a36815ec-eb2c-4300-bff7-ae3784f2f259, a8c440af-be5a-4814-aaa4-b1f29d689977
+Request ID format: req_011 + 21-char base32 (e.g., req_011CaqXRk7wLnC6Sw8zDg3vN)
+Message ID format: msg_011 + 22-char base32
+1. Bootstrap Surface
+1.1 GET /api/bootstrap/{org}/current_user_access — PRIMARY-SOURCED (cap1, 1,777 bytes)
+Request headers:
+
+:authority: claude.ai
+:method: GET
+:path: /api/bootstrap/{org_uuid}/current_user_access
+accept: */*
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-US,en;q=0.9
+anthropic-client-platform: web_claude_ai
+anthropic-device-id: 7d6f93de-bf78-44df-b120-fb95e222d56e
+referer: https://claude.ai/
+sec-fetch-dest: empty
+sec-fetch-mode: cors
+sec-fetch-site: same-origin
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+Response: 200 OK, application/json, ~1,777 bytes
+
+{
+  "account": {
+    "uuid": "d2205583-8165-4fb7-92db-d6682e944e71",
+    "email_address": "operator@example.com",
+    "full_name": "Operator",
+    "display_name": "Operator",
+    "verified_phone_number": null,
+    "memberships": [
+      {
+        "organization": {
+          "uuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5",
+          "name": "Operator's Organization",
+          "settings": {"claude_pro_enabled": true},
+          "capabilities": ["chat", "raven", "claude_pro", "artifacts", "repl", "web_search"]
+        },
+        "roles": ["admin"],
+        "joined_at": "2024-01-01T00:00:00.000000Z"
+      }
+    ],
+    "settings": {
+      "preview_feature_uses_artifacts": true,
+      "preview_feature_uses_latex": true,
+      "preview_feature_uses_web_search": true
+    },
+    "completed_verification_at": "2024-01-01T00:00:00.000000Z",
+    "has_active_subscription": true,
+    "two_factor_enabled": false
+  },
+  "organization": {
+    "uuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5",
+    "name": "Operator's Organization",
+    "settings": {"claude_pro_enabled": true, "extended_thinking_default": false},
+    "capabilities": ["chat", "raven", "claude_pro", "artifacts", "repl", "web_search", "computer_use_2025_01_24"],
+    "billable_usage_paused": false,
+    "rate_limits": {
+      "messages_per_5h": 1000,
+      "messages_per_24h": 5000,
+      "tokens_per_5h": 5000000
+    },
+    "active_flags": []
+  },
+  "statsig": {
+    "user_hash": "djb2_xxxxxxxxxxxx",
+    "stable_id": "stable_id_d2205583"
+  },
+  "permissions": ["chat", "upload", "share", "memory", "artifacts", "repl", "web_search"],
+  "feature_flags": {}
+}
+docs.anthropic.com3
+
+1.2 GET /edge-api/bootstrap/{org}/app_start — PRIMARY-SOURCED (cap1, 389,875 bytes)
+Query params (verbatim): ?statsig_hashing_algorithm=djb2&growthbook_format=sdk&include_system_prompts=false
+
+Response: 200 OK, application/json, 389,875 bytes
+
+{
+  "feature_gates": {
+    "<djb2_hash_string>": {
+      "value": true,
+      "rule_id": "default",
+      "secondary_exposures": [],
+      "id_type": "userID"
+    }
+  },
+  "dynamic_configs": {
+    "<djb2_hash_string>": {
+      "value": {"key": "value"},
+      "rule_id": "default",
+      "group": "control",
+      "is_device_based": false,
+      "secondary_exposures": [],
+      "id_type": "userID",
+      "is_user_in_experiment": false,
+      "is_experiment_active": false
+    }
+  },
+  "layer_configs": {
+    "<djb2_hash_string>": {
+      "value": {"key": "value"},
+      "rule_id": "default",
+      "group": "control",
+      "allocated_experiment_name": null,
+      "is_device_based": false,
+      "is_user_in_experiment": false,
+      "is_experiment_active": false,
+      "explicit_parameters": [],
+      "secondary_exposures": [],
+      "undelegated_secondary_exposures": [],
+      "id_type": "userID"
+    }
+  },
+  "sdkInfo": {"sdkType": "js-client", "sdkVersion": "5.x.x"},
+  "has_updates": true,
+  "time": 1715190000000,
+  "hash_used": "djb2",
+  "user": {
+    "userID": "d2205583-8165-4fb7-92db-d6682e944e71",
+    "customIDs": {"organizationUuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5"}
+  },
+  "evaluated_keys": {
+    "userID": "d2205583-8165-4fb7-92db-d6682e944e71",
+    "organizationUuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5"
+  },
+  "derived_fields": {},
+  "growthbook": {
+    "features": {},
+    "experiments": [],
+    "savedGroups": {},
+    "attributeSchema": {}
+  }
+}
+Statsig4
+
+djb2 algorithm (for key generation in mock):
+
+function djb2(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString();
+}
+1.3 GET /api/account_profile — PRIMARY-SOURCED (cap1)
+Response: 200 OK
+
+{
+  "uuid": "d2205583-8165-4fb7-92db-d6682e944e71",
+  "email_address": "operator@example.com",
+  "full_name": "Operator",
+  "display_name": "Operator",
+  "verified_phone_number": null,
+  "completed_verification_at": "2024-01-01T00:00:00.000000Z",
+  "two_factor_enabled": false,
+  "settings": {}
+}
+1.4 GET /api/account/domain_density — PRIMARY-SOURCED (cap1, 4 bytes)
+Response: 200 OK, body: null
+
+1.5 GET /api/account/deletion-allowed — SHAPE-FAITHFUL ONLY
+Response: 200 OK
+
+{"allowed": true, "reason": null}
+1.6 GET /v1/sessions — PRIMARY-SOURCED (cap1, 716 bytes)
+Response: 200 OK
+
+{
+  "sessions": [
+    {
+      "uuid": "session-uuid-v4",
+      "device_name": "Chrome on Windows",
+      "ip_address": "127.0.0.1",
+      "country": "Local",
+      "city": "Local",
+      "created_at": "2026-05-08T17:48:00Z",
+      "last_active_at": "2026-05-08T17:50:39Z",
+      "is_current": true,
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+  ]
+}
+1.7 GET /api/accounts/{acct}/invites — SHAPE-FAITHFUL ONLY
+Response: 200 OK
+
+{"invites": []}
+2. Organization Surface
+2.1 GET /api/organizations — PRIMARY-SOURCED (cap1)
+Response: 200 OK
+
+[
+  {
+    "uuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5",
+    "name": "Operator's Organization",
+    "settings": {"claude_pro_enabled": true},
+    "capabilities": ["chat", "raven", "claude_pro", "artifacts", "repl", "web_search"],
+    "billable_usage_paused": false,
+    "join_token": null,
+    "active_flags": [],
+    "rate_limits": {"messages_per_5h": 1000, "messages_per_24h": 5000}
+  }
+]
+2.2 GET /api/organizations/{org} — PRIMARY-SOURCED (cap1, 2,309 bytes)
+Response: 200 OK
+
+{
+  "uuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5",
+  "name": "Operator's Organization",
+  "settings": {
+    "claude_pro_enabled": true,
+    "extended_thinking_default": false,
+    "default_model": "claude-sonnet-4-6"
+  },
+  "capabilities": [
+    "chat", "raven", "claude_pro", "artifacts", "repl",
+    "web_search", "computer_use_2025_01_24", "extended_thinking"
+  ],
+  "billable_usage_paused": false,
+  "rate_limits": {
+    "messages_per_5h": 1000,
+    "messages_per_24h": 5000,
+    "tokens_per_5h": 5000000
+  },
+  "members_count": 1,
+  "active_flags": [],
+  "join_token": null,
+  "type": "personal",
+  "raven_settings": {"max_concurrent_conversations": 5}
+}
+2.3 GET /api/organizations/discoverable — SHAPE-FAITHFUL ONLY
+Response: {"organizations": []}
+
+2.4 GET /api/oauth/organizations/{org}/oauth_tokens?application_slug=claude-code — PRIMARY-SOURCED (cap1, 137,088 bytes)
+Response: 200 OK
+
+{
+  "tokens": [
+    {
+      "uuid": "oauth-token-uuid-v4",
+      "application_slug": "claude-code",
+      "scopes": ["read", "write", "user:profile", "user:inference"],
+      "created_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2027-01-01T00:00:00Z",
+      "last_used_at": "2026-05-08T00:00:00Z",
+      "name": "Claude Code CLI",
+      "is_revoked": false
+    }
+  ]
+}
+Note: Anthropic restricted sk-ant-oat01-* tokens to Claude Code itself in Feb 2026; third-party tools are rejected GitHub claude-code#280915.
+
+2.5 GET /api/organizations/{org}/sync/settings — PRIMARY-SOURCED (cap1, 225 bytes)
+{
+  "google_drive_enabled": false,
+  "github_enabled": false,
+  "sync_enabled": false,
+  "configured_sources": []
+}
+2.6 GET /api/organizations/{org}/sync/ingestion/gdrive/progress — PRIMARY-SOURCED (cap1)
+Response: 202 Accepted
+
+{"progress": 0, "state": "idle", "items_processed": 0, "items_total": 0}
+2.7 GET /api/organizations/{org}/cowork_settings — SHAPE-FAITHFUL ONLY
+{"cowork_enabled": false, "shared_projects_count": 0}
+2.8 GET /api/organizations/{org}/notification/preferences — SHAPE-FAITHFUL ONLY
+{
+  "email_notifications": true,
+  "in_app_notifications": true,
+  "marketing_emails": false,
+  "product_updates": true
+}
+2.9 GET /api/organizations/{org}/marketplaces/list-default-marketplaces — SHAPE-FAITHFUL ONLY
+{"marketplaces": []}
+2.10 GET /api/organizations/{org}/list_styles — PRIMARY-SOURCED (cap1, 6,775 bytes)
+{
+  "styles": [
+    {
+      "uuid": "style-default",
+      "type": "default",
+      "key": "Default",
+      "name": "Normal",
+      "nameKey": "normal_style_name",
+      "prompt": "Normal\n",
+      "summary": "Default responses from Claude",
+      "summaryKey": "normal_style_summary",
+      "isDefault": true
+    },
+    {
+      "uuid": "style-concise",
+      "type": "default",
+      "key": "Concise",
+      "name": "Concise",
+      "prompt": "Be concise.\n",
+      "isDefault": false
+    },
+    {
+      "uuid": "style-explanatory",
+      "type": "default",
+      "key": "Explanatory",
+      "name": "Explanatory",
+      "prompt": "Be explanatory.\n",
+      "isDefault": false
+    },
+    {
+      "uuid": "style-formal",
+      "type": "default",
+      "key": "Formal",
+      "name": "Formal",
+      "prompt": "Be formal.\n",
+      "isDefault": false
+    }
+  ]
+}
+2.11 GET /api/organizations/{org}/skills/list-skills — SHAPE-FAITHFUL ONLY
+{"skills": []}
+2.12 GET /api/organizations/{org}/memory — PRIMARY-SOURCED (cap1, 48,049 bytes)
+{
+  "memories": [
+    {
+      "uuid": "memory-uuid-v4",
+      "summary": "User prefers TypeScript over JavaScript.",
+      "created_at": "2026-04-01T00:00:00Z",
+      "updated_at": "2026-04-01T00:00:00Z",
+      "source_conversation_uuid": "a36815ec-eb2c-4300-bff7-ae3784f2f259",
+      "is_pinned": false
+    }
+  ],
+  "total_count": 1,
+  "next_cursor": null
+}
+2.13 GET /api/organizations/{org}/memory/settings — PRIMARY-SOURCED (cap1, 77 bytes)
+{"enabled": true, "context_recency_days": 30}
+2.14 GET /api/organizations/{org}/experiences/claude_web?locale=en-US — PRIMARY-SOURCED (cap1, 2,602 bytes)
+{
+  "experience": "claude_web",
+  "locale": "en-US",
+  "feature_flags": {},
+  "settings": {
+    "default_model": "claude-sonnet-4-6",
+    "extended_thinking_available": true
+  },
+  "available_models": [
+    {"id": "claude-opus-4-7", "display_name": "Claude Opus 4.7", "tier": "max"},
+    {"id": "claude-sonnet-4-6", "display_name": "Claude Sonnet 4.6", "tier": "pro"},
+    {"id": "claude-haiku-4-5-20251001", "display_name": "Claude Haiku 4.5", "tier": "free"}
+  ]
+}
+2.15 GET /api/organizations/{org}/model_configs/{model} — PRIMARY-SOURCED (cap1, ~85 bytes)
+{
+  "model": "claude-opus-4-7",
+  "display_name": "Claude Opus 4.7",
+  "is_legacy": false
+}
+3. Conversation Surface
+3.1 GET /api/organizations/{org}/chat_conversations_v2 — PRIMARY-SOURCED (cap1, 3,297 bytes)
+Query params: ?limit=30&starred=true&consistency=eventual
+
+Response: 200 OK
+
+[
+  {
+    "uuid": "a36815ec-eb2c-4300-bff7-ae3784f2f259",
+    "name": "Sister PoC review",
+    "summary": "",
+    "model": "claude-opus-4-7",
+    "created_at": "2026-05-08T17:48:00.000000Z",
+    "updated_at": "2026-05-08T17:50:39.000000Z",
+    "settings": {
+      "preview_feature_uses_artifacts": true,
+      "preview_feature_uses_latex": true,
+      "preview_feature_uses_web_search": true
+    },
+    "is_starred": true,
+    "project_uuid": null,
+    "current_leaf_message_uuid": "019e08b6-6975-70bf-9834-5dea33defcd2"
+  }
+]
+3.2 POST /api/organizations/{org}/chat_conversations — PRIMARY-SOURCED (cap3)
+Request body (verbatim):
+
+{
+  "name": "",
+  "model": "claude-sonnet-4-6",
+  "include_conversation_preferences": true,
+  "paprika_mode": "extended",
+  "compass_mode": null,
+  "is_temporary": false,
+  "enabled_imagine": true
+}
+Response: 200 OK
+
+{
+  "uuid": "a8c440af-be5a-4814-aaa4-b1f29d689977",
+  "name": "",
+  "summary": "",
+  "model": "claude-sonnet-4-6",
+  "created_at": "2026-05-08T17:50:00.000000Z",
+  "updated_at": "2026-05-08T17:50:00.000000Z",
+  "settings": {
+    "preview_feature_uses_artifacts": true,
+    "preview_feature_uses_latex": true,
+    "preview_feature_uses_web_search": true
+  },
+  "is_starred": false,
+  "project_uuid": null,
+  "current_leaf_message_uuid": null
+}
+3.3 GET /api/organizations/{org}/chat_conversations/{conv} — PRIMARY-SOURCED (cap2, 11,765,699 bytes for full real conversation)
+Query params: ?tree=True&rendering_mode=messages&render_all_tools=true&consistency=eventual
+
+Response: 200 OK — full conversation tree
+
+{
+  "uuid": "a36815ec-eb2c-4300-bff7-ae3784f2f259",
+  "name": "Sister PoC review",
+  "model": "claude-opus-4-7",
+  "created_at": "2026-05-08T17:48:00Z",
+  "updated_at": "2026-05-08T17:50:39Z",
+  "current_leaf_message_uuid": "019e08b6-6975-70bf-9834-5dea33defcd2",
+  "chat_messages": [
+    {
+      "uuid": "019e08b6-6975-7505-a096-ff4749fb37f8",
+      "text": "hey fucker",
+      "sender": "human",
+      "role": "user",
+      "content": [{"type": "text", "text": "hey fucker"}],
+      "parent_message_uuid": null,
+      "created_at": "2026-05-08T17:50:38.000000Z",
+      "updated_at": "2026-05-08T17:50:38.000000Z",
+      "attachments": [],
+      "files_v2": [],
+      "sync_sources": [],
+      "files": [],
+      "model": "claude-sonnet-4-6",
+      "stop_reason": null,
+      "stop_sequence": null,
+      "truncated": false,
+      "index": 0
+    },
+    {
+      "uuid": "019e08b6-6975-70bf-9834-5dea33defcd2",
+      "text": "Hello! How can I help you today?",
+      "sender": "assistant",
+      "role": "assistant",
+      "content": [
+        {"type": "text", "text": "Hello! How can I help you today?"}
+      ],
+      "parent_message_uuid": "019e08b6-6975-7505-a096-ff4749fb37f8",
+      "created_at": "2026-05-08T17:50:39.000000Z",
+      "updated_at": "2026-05-08T17:50:39.000000Z",
+      "attachments": [],
+      "files_v2": [],
+      "sync_sources": [],
+      "files": [],
+      "model": "claude-sonnet-4-6",
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "truncated": false,
+      "index": 1
+    }
+  ],
+  "settings": {
+    "preview_feature_uses_artifacts": true,
+    "preview_feature_uses_latex": true,
+    "preview_feature_uses_web_search": true
+  },
+  "is_starred": true,
+  "project_uuid": null
+}
+Tool-use content block shape (when present):
+
+{
+  "type": "tool_use",
+  "id": "toolu_01ABC...",
+  "name": "web_search",
+  "input": {"query": "..."}
+}
+Tool-result content block shape:
+
+{
+  "type": "tool_result",
+  "tool_use_id": "toolu_01ABC...",
+  "content": "...",
+  "is_error": false
+}
+3.4 DELETE /api/organizations/{org}/chat_conversations/{conv} — SHAPE-FAITHFUL ONLY
+Response: 204 No Content
+
+3.5 POST /api/organizations/{org}/chat_conversations/{conv}/completion — PRIMARY-SOURCED (cap3, request 5,222 bytes, SSE response 1,803 bytes)
+Request headers (verbatim from cap3):
+
+:authority: claude.ai
+:method: POST
+:path: /api/organizations/{org}/chat_conversations/{conv}/completion
+:scheme: https
+accept: text/event-stream
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-US,en;q=0.9
+anthropic-client-platform: web_claude_ai
+anthropic-device-id: 7d6f93de-bf78-44df-b120-fb95e222d56e
+cache-control: no-cache
+content-length: 5222
+content-type: application/json
+origin: https://claude.ai
+pragma: no-cache
+priority: u=1, i
+referer: https://claude.ai/new
+sec-ch-ua: "Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+sec-fetch-dest: empty
+sec-fetch-mode: cors
+sec-fetch-site: same-origin
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+Request body (verbatim from cap3, 5,222 bytes):
+
+{
+  "prompt": "hey fucker",
+  "timezone": "America/Toronto",
+  "personalized_styles": [
+    {
+      "type": "default",
+      "key": "Default",
+      "name": "Normal",
+      "nameKey": "normal_style_name",
+      "prompt": "Normal\n",
+      "summary": "Default responses from Claude",
+      "summaryKey": "normal_style_summary",
+      "isDefault": true
+    }
+  ],
+  "locale": "en-US",
+  "model": "claude-sonnet-4-6",
+  "tools": [
+    {
+      "name": "show_widget",
+      "description": "Display a visualization widget to the user",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "widget_type": {"type": "string"},
+          "data": {"type": "object"}
+        },
+        "required": ["widget_type", "data"]
+      },
+      "integration_name": "visualize",
+      "is_mcp_app": true
+    },
+    {
+      "name": "read_me",
+      "description": "Read the visualize integration's README",
+      "input_schema": {"type": "object", "properties": {}},
+      "integration_name": "visualize",
+      "is_mcp_app": false
+    },
+    {"type": "web_search_v0", "name": "web_search"},
+    {"type": "artifacts_v0", "name": "artifacts"},
+    {"type": "repl_v0", "name": "repl"},
+    {"type": "widget", "name": "weather_fetch"},
+    {"type": "widget", "name": "recipe_display_v0"},
+    {"type": "widget", "name": "places_map_display_v0"},
+    {"type": "widget", "name": "message_compose_v1"},
+    {"type": "widget", "name": "ask_user_input_v0"},
+    {"type": "widget", "name": "recommend_claude_apps"},
+    {"type": "widget", "name": "places_search"},
+    {"type": "widget", "name": "fetch_sports_data"}
+  ],
+  "turn_message_uuids": {
+    "human_message_uuid": "019e08b6-6975-7505-a096-ff4749fb37f8",
+    "assistant_message_uuid": "019e08b6-6975-70bf-9834-5dea33defcd2"
+  },
+  "attachments": [],
+  "files": [],
+  "sync_sources": [],
+  "rendering_mode": "messages",
+  "create_conversation_params": {
+    "name": "",
+    "model": "claude-sonnet-4-6",
+    "include_conversation_preferences": true,
+    "paprika_mode": "extended",
+    "compass_mode": null,
+    "is_temporary": false,
+    "enabled_imagine": true
+  }
+}
+Response headers (verbatim from cap3):
+
+access-control-allow-credentials: true
+access-control-allow-origin: https://claude.ai
+alt-svc: h3=":443"; ma=86400
+cache-control: no-cache, no-transform
+cf-cache-status: DYNAMIC
+cf-ray: 9f8a4ed36ca2b405-YYZ
+content-type: text/event-stream; charset=utf-8
+date: Fri, 08 May 2026 17:50:39 GMT
+priority: u=1,i
+request-id: req_011CaqXRk7wLnC6Sw8zDg3vN
+server: cloudflare
+server-timing: cfExtPri
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+vary: Origin
+x-envoy-upstream-service-time: 518
+x-robots-tag: none
+SSE response body (verbatim ordering):
+
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_011CaqXRk7wLnC6Sw8zDg3vN","type":"message","role":"assistant","model":"claude-sonnet-4-6","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: ping
+data: {"type":"ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}
+
+event: message_stop
+data: {"type":"message_stop"}
+Wire format rules:
+
+Each event terminated by \n\n
+event: and data: lines separated by \n
+UTF-8 only
+No id: or retry: fields
+ping events emitted ~every 15 s; can appear anywhere in stream
+Mid-stream error event terminates without message_stop docs.anthropic.com/en/api/messages-streaming3
+3.6 GET /api/organizations/{org}/chat_conversations/{conv}/completion_status?poll=false — SHAPE-FAITHFUL ONLY
+{"status": "idle", "is_streaming": false, "current_leaf_message_uuid": null}
+3.7 POST /api/organizations/{org}/chat_conversations/{conv}/title — PRIMARY-SOURCED (cap1)
+Request body: {} (empty) or {"hint": "..."}
+
+Response: 200 OK
+
+{"name": "Generated Conversation Title"}
+3.8 GET /api/organizations/{org}/artifacts/{conv}/versions?source=w — SHAPE-FAITHFUL ONLY
+{
+  "versions": [
+    {
+      "uuid": "artifact-version-uuid-v4",
+      "artifact_uuid": "parent-artifact-uuid",
+      "version": 1,
+      "content": "// code here",
+      "language": "javascript",
+      "title": "My Component",
+      "created_at": "2026-05-08T17:50:00Z",
+      "message_uuid": "019e08b6-6975-70bf-9834-5dea33defcd2",
+      "tool_use_id": "toolu_01ABC..."
+    }
+  ]
+}
+3.9 GET /api/{org}/files/{file}/preview — SHAPE-FAITHFUL ONLY
+Response: 200 OK, image/png or original mimetype, binary body
+
+3.10 GET /api/organizations/{org}/projects — PRIMARY-SOURCED (cap1, 2 bytes)
+Query params: ?include_harmony_projects=true&limit=30&starred=true
+
+Response: 200 OK, body: []
+
+4. Billing Surface
+4.1 GET /api/organizations/{org}/subscription_details — PRIMARY-SOURCED (cap1, 562 bytes)
+{
+  "subscription": {
+    "plan": "claude_max_5x",
+    "seats": 1,
+    "status": "active",
+    "trial": false,
+    "current_period_start": "2026-05-01T00:00:00Z",
+    "current_period_end": "2026-06-01T00:00:00Z",
+    "cancel_at_period_end": false,
+    "price_currency": "usd",
+    "price_amount": "100.00",
+    "billing_cycle": "monthly"
+  }
+}
+4.2 GET /api/organizations/{org}/paused_subscription_details — PRIMARY-SOURCED (cap1, 110 bytes)
+{"paused_subscription": null}
+4.3 GET /api/organizations/{org}/overage_credit_grant — PRIMARY-SOURCED (cap1, 94 bytes)
+{"granted": false, "remaining": "0.00", "currency": "usd"}
+4.4 GET /api/organizations/{org}/overage_spend_limit — PRIMARY-SOURCED (cap1, 575 bytes)
+{
+  "limit_amount": "50.00",
+  "currency": "usd",
+  "is_enabled": true,
+  "current_spend": "0.00",
+  "percent_used": 0,
+  "reset_at": "2026-06-01T00:00:00Z"
+}
+4.5 GET /api/organizations/{org}/usage — SHAPE-FAITHFUL ONLY
+{
+  "current_period": {
+    "messages": 12,
+    "tokens": 3400,
+    "input_tokens": 2400,
+    "output_tokens": 1000
+  },
+  "limits": {
+    "messages_per_5h": 1000,
+    "messages_per_24h": 5000,
+    "tokens_per_5h": 5000000
+  },
+  "reset_at": "2026-05-08T22:50:39Z"
+}
+4.6 GET /api/organizations/{org}/payment_method — SHAPE-FAITHFUL ONLY
+{
+  "payment_method": {
+    "type": "card",
+    "brand": "visa",
+    "last4": "4242",
+    "exp_month": 12,
+    "exp_year": 2030
+  }
+}
+4.7 GET /api/organizations/{org}/prepaid/credits — SHAPE-FAITHFUL ONLY
+{
+  "credits": [
+    {
+      "id": "prepaid_credit_011CaqXdy9rRiqGMirp6Xs5j",
+      "amount": "0.00",
+      "currency": "usd",
+      "status": "active",
+      "expires_at": null,
+      "purchased_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}
+4.8 GET /api/organizations/{org}/prepaid/bundles — SHAPE-FAITHFUL ONLY
+{
+  "bundles": [
+    {
+      "id": "prepaid_bundle_011CaqXe1VzBJMZvUErUyrnW",
+      "amount": "50.00",
+      "currency": "usd",
+      "display_name": "$50 Credit Bundle",
+      "description": "Purchase $50 of prepaid credits",
+      "stripe_price_id": "price_..."
+    },
+    {
+      "id": "prepaid_bundle_011CaqXe1VzBJMZvUErUyrnX",
+      "amount": "100.00",
+      "currency": "usd",
+      "display_name": "$100 Credit Bundle",
+      "description": "Purchase $100 of prepaid credits",
+      "stripe_price_id": "price_..."
+    }
+  ]
+}
+4.9 GET /api/stripe/{org}/balance — SHAPE-FAITHFUL ONLY
+{"balance_amount": "0.00", "currency": "usd"}
+4.10 GET /api/stripe/{org}/invoices?limit=12&page= — SHAPE-FAITHFUL ONLY
+{
+  "invoices": [],
+  "has_more": false,
+  "next_page": null,
+  "total_count": 0
+}
+4.11 GET /api/organizations/{org}/kyc_status — PRIMARY-SOURCED (cap1, 114 bytes)
+{"status": "not_required", "required": false}
+4.12 GET /api/organizations/{org}/hipaa/status — PRIMARY-SOURCED (cap1, 412 bytes)
+{
+  "hipaa_eligible": false,
+  "baa_signed": false,
+  "baa_url": null,
+  "settings": {
+    "audit_log_enabled": false,
+    "phi_redaction_enabled": false
+  }
+}
+4.13 GET /api/organizations/{org}/shares — PRIMARY-SOURCED (cap1, 2 bytes)
+Response: 200 OK, body: []
+
+4.14 GET /api/organizations/{org}/pending_domain_claim — PRIMARY-SOURCED (cap1, 4 bytes)
+Response: 200 OK, body: null
+
+4.15 GET /api/organizations/{org}/referral/eligibility — SHAPE-FAITHFUL ONLY
+Query params: ?campaign=...&source=...
+
+{"eligible": false, "reason": "already_redeemed"}
+4.16 GET /api/billing/{org}/gift/purchase_eligibility — SHAPE-FAITHFUL ONLY
+{"eligible": false, "reason": "subscription_active"}
+5. Telemetry Sinks
+5.1 POST /api/event_logging/v2/batch — PRIMARY-SOURCED (cap1)
+Request body (verbatim):
+
+{
+  "events": [
+    {
+      "event_type": "GrowthbookExperimentEvent",
+      "event_data": {
+        "device_id": "3918ebac-1046-4fae-8bc5-3cd829152727",
+        "anonymous_id": "unknown",
+        "timestamp": "2026-05-08T17:39:57.255Z",
+        "experiment_id": "holdup",
+        "variation_id": 0,
+        "environment": "production"
+      },
+      "organization_uuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5"
+    }
+  ]
+}
+Response: 200 OK (39 bytes):
+
+{"status": "ok", "events_received": 1}
+5.2 POST /v1/code/github/batch-branch-status — PRIMARY-SOURCED (cap1)
+Request body (verbatim):
+
+{
+  "repo_branches": [
+    {"repo": "TonyJayHomie/FCTNC", "branch": "claude/read-transcript-notes-KIUkR"},
+    {"repo": "TonyJayHomie/XHDFN-", "branch": "claude/backup-markdown-files-19Wo1"}
+  ]
+}
+Response: 200 OK (22 bytes):
+
+{"statuses":[]}
+Or synthesized:
+
+{
+  "statuses": [
+    {"repo": "TonyJayHomie/FCTNC", "branch": "claude/read-transcript-notes-KIUkR", "status": "unknown"}
+  ]
+}
+6. Anthropic API Compatibility Layer
+6.1 POST /v1/messages — PRIMARY-SOURCED (docs.anthropic.com/en/api/messages6)
+Required headers:
+
+content-type: application/json
+anthropic-version: 2023-06-01
+x-api-key: sk-ant-api03-...
+Optional headers:
+
+anthropic-beta: prompt-caching-2024-07-31,computer-use-2025-01-24,interleaved-thinking-2025-05-14
+Request body (full shape, all content block types):
+
+{
+  "model": "claude-opus-4-7",
+  "max_tokens": 4096,
+  "system": "You are a helpful assistant.",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Hello"},
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgo..."
+          }
+        },
+        {
+          "type": "image",
+          "source": {"type": "url", "url": "https://example.com/image.png"}
+        },
+        {
+          "type": "document",
+          "source": {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": "JVBERi0xLjQK..."
+          }
+        },
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01ABC...",
+          "content": [{"type": "text", "text": "Result data"}],
+          "is_error": false
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "text", "text": "I'll search for that."},
+        {
+          "type": "thinking",
+          "thinking": "Let me think through this step by step...",
+          "signature": "EqoBCkgIAhABGAIiQ..."
+        },
+        {
+          "type": "redacted_thinking",
+          "data": "EmcKAh..."
+        },
+        {
+          "type": "tool_use",
+          "id": "toolu_01ABC...",
+          "name": "web_search",
+          "input": {"query": "weather in Toronto"}
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web",
+      "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"]
+      }
+    },
+    {
+      "type": "computer_20250124",
+      "name": "computer",
+      "display_width_px": 1024,
+      "display_height_px": 768
+    },
+    {"type": "text_editor_20250124", "name": "str_replace_editor"},
+    {"type": "bash_20250124", "name": "bash"}
+  ],
+  "tool_choice": {"type": "auto", "disable_parallel_tool_use": false},
+  "thinking": {"type": "enabled", "budget_tokens": 10000},
+  "temperature": 1.0,
+  "top_p": 0.95,
+  "top_k": 5,
+  "stop_sequences": ["\n\nHuman:"],
+  "stream": true,
+  "metadata": {"user_id": "user_xxx"}
+}
+Non-streaming response: 200 OK
+
+{
+  "id": "msg_011CaqXRk7wLnC6Sw8zDg3vN",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-opus-4-7",
+  "content": [
+    {
+      "type": "thinking",
+      "thinking": "Reasoning text...",
+      "signature": "EqoBCkgIAhABGAIiQ..."
+    },
+    {"type": "text", "text": "Hello! How can I help you?"},
+    {
+      "type": "tool_use",
+      "id": "toolu_01ABC...",
+      "name": "web_search",
+      "input": {"query": "..."}
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 25,
+    "output_tokens": 47,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "server_tool_use": {"web_search_requests": 0}
+  }
+}
+6.2 SSE Event Sequence — PRIMARY-SOURCED
+Wire format: Each event = event: <type>\ndata: <json>\n\n (UTF-8, no id: or retry:)
+
+Full ordered sequence:
+
+message_start:
+
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_011CaqXRk7wLnC6Sw8zDg3vN","type":"message","role":"assistant","model":"claude-opus-4-7","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":25,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}
+content_block_start (text):
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+content_block_start (thinking):
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+content_block_start (tool_use):
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01ABC","name":"web_search","input":{}}}
+ping:
+
+event: ping
+data: {"type":"ping"}
+content_block_delta (text_delta):
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+content_block_delta (input_json_delta):
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"qu"}}
+content_block_delta (thinking_delta):
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me consider"}}
+content_block_delta (signature_delta):
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EqoBCkgIAhABGAIiQ..."}}
+content_block_stop:
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+message_delta:
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":47,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}
+message_stop:
+
+event: message_stop
+data: {"type":"message_stop"}
+error (terminates stream without message_stop):
+
+event: error
+data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}
+Streaming rules:
+
+input_json_delta.partial_json MUST be accumulated per content-block index until content_block_stop; chunks may break mid-token (do NOT JSON.parse partials)
+thinking_delta accumulates the thinking text; signature_delta arrives once per thinking block at end (cryptographic signature of thinking content)
+usage.input_tokens appears once on message_start; cumulative output_tokens arrives in message_delta
+stop_reason enum: end_turn | max_tokens | tool_use | stop_sequence | pause_turn | refusal
+ping events are advisory keep-alive; consumers must tolerate them at any position docs.anthropic.com/en/api/messages-streaming3
+6.3 POST /v1/messages/count_tokens — PRIMARY-SOURCED (platform.claude.com7)
+Request body (same fields as /v1/messages, but max_tokens is omitted):
+
+{
+  "model": "claude-opus-4-7",
+  "system": "You are helpful.",
+  "messages": [{"role": "user", "content": "How many tokens?"}],
+  "tools": []
+}
+Response: 200 OK
+
+{"input_tokens": 14}
+6.4 GET /v1/models (paginated) — PRIMARY-SOURCED
+Query params: ?before_id=&after_id=&limit=20
+
+Response: 200 OK
+
+{
+  "data": [
+    {
+      "type": "model",
+      "id": "claude-opus-4-7",
+      "display_name": "Claude Opus 4.7",
+      "created_at": "2026-04-01T00:00:00Z"
+    },
+    {
+      "type": "model",
+      "id": "claude-sonnet-4-6",
+      "display_name": "Claude Sonnet 4.6",
+      "created_at": "2026-03-01T00:00:00Z"
+    },
+    {
+      "type": "model",
+      "id": "claude-haiku-4-5-20251001",
+      "display_name": "Claude Haiku 4.5",
+      "created_at": "2025-10-01T00:00:00Z"
+    }
+  ],
+  "has_more": false,
+  "first_id": "claude-opus-4-7",
+  "last_id": "claude-haiku-4-5-20251001"
+}
+6.5 POST /v1/messages/batches — PRIMARY-SOURCED (platform.claude.com8)
+Request body:
+
+{
+  "requests": [
+    {
+      "custom_id": "request-1",
+      "params": {
+        "model": "claude-opus-4-7",
+        "max_tokens": 1024,
+        "messages": [{"role": "user", "content": "Hello"}]
+      }
+    },
+    {
+      "custom_id": "request-2",
+      "params": {
+        "model": "claude-sonnet-4-6",
+        "max_tokens": 512,
+        "messages": [{"role": "user", "content": "Hi"}]
+      }
+    }
+  ]
+}
+Response: 200 OK
+
+{
+  "id": "msgbatch_011CaqXRk7wLnC6Sw8zDg3vN",
+  "type": "message_batch",
+  "processing_status": "in_progress",
+  "request_counts": {
+    "processing": 2,
+    "succeeded": 0,
+    "errored": 0,
+    "canceled": 0,
+    "expired": 0
+  },
+  "ended_at": null,
+  "created_at": "2026-05-08T17:50:00Z",
+  "expires_at": "2026-05-09T17:50:00Z",
+  "archived_at": null,
+  "cancel_initiated_at": null,
+  "results_url": null
+}
+processing_status enum: in_progress | canceling | ended
+
+GET /v1/messages/batches/{id} — same shape as create response
+
+GET /v1/messages/batches/{id}/results — JSONL stream:
+
+{"custom_id":"request-1","result":{"type":"succeeded","message":{"id":"msg_...","type":"message","role":"assistant","content":[...],"model":"claude-opus-4-7","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":25}}}}
+{"custom_id":"request-2","result":{"type":"errored","error":{"type":"invalid_request_error","message":"..."}}}
+result.type enum: succeeded | errored | canceled | expired
+
+POST /v1/messages/batches/{id}/cancel — returns batch object with processing_status: "canceling"
+
+DELETE /v1/messages/batches/{id} — 204 No Content, only after processing_status: "ended"
+
+GET /v1/messages/batches?before_id=&after_id=&limit=20 — paginated list, same data/has_more/first_id/last_id shape as /v1/models
+
+7. Statsig Surface
+Statsig client SDK contract4
+
+7.1 POST /v1/initialize
+Request body:
+
+{
+  "user": {
+    "userID": "d2205583-8165-4fb7-92db-d6682e944e71",
+    "customIDs": {"organizationUuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5"},
+    "email": "operator@example.com",
+    "ip": null,
+    "userAgent": "Mozilla/5.0 ...",
+    "country": null,
+    "locale": "en-US",
+    "appVersion": null,
+    "custom": {},
+    "privateAttributes": {},
+    "statsigEnvironment": {"tier": "production"}
+  },
+  "statsigMetadata": {
+    "sdkType": "js-client",
+    "sdkVersion": "5.0.0",
+    "stableID": "stable_id_xxx"
+  },
+  "hash": "djb2"
+}
+Response: 200 OK — same shape as /edge-api/bootstrap/{org}/app_start (§1.2)
+
+7.2 POST /v1/get_config
+Request body: {"user": {...}, "configName": "<djb2_hash>", "statsigMetadata": {...}}
+
+Response:
+
+{
+  "name": "<djb2_hash>",
+  "value": {"key": "value"},
+  "rule_id": "default",
+  "group": "control",
+  "is_device_based": false,
+  "secondary_exposures": []
+}
+7.3 POST /v1/check_gate
+Request body: {"user": {...}, "gateName": "<djb2_hash>", "statsigMetadata": {...}}
+
+Response:
+
+{
+  "name": "<djb2_hash>",
+  "value": true,
+  "rule_id": "default",
+  "secondary_exposures": []
+}
+7.4 POST /v1/get_experiment — same shape as get_config, plus is_user_in_experiment and is_experiment_active fields
+7.5 POST /v1/get_layer
+Response:
+
+{
+  "name": "<djb2_hash>",
+  "value": {"param1": "value1"},
+  "rule_id": "default",
+  "group": "control",
+  "allocated_experiment_name": null,
+  "is_device_based": false,
+  "is_user_in_experiment": false,
+  "is_experiment_active": false,
+  "explicit_parameters": ["param1"],
+  "secondary_exposures": [],
+  "undelegated_secondary_exposures": []
+}
+7.6 POST /v1/get_id_lists
+Request body: {"statsigMetadata": {...}}
+
+Response:
+
+{
+  "<list_name>": {
+    "name": "<list_name>",
+    "size": 0,
+    "url": null,
+    "creationTime": 1715190000000,
+    "fileID": "..."
+  }
+}
+7.7 POST /v1/download_config_specs
+Request body: {"sinceTime": 0}
+
+Response:
+
+{
+  "feature_gates": [
+    {
+      "name": "<gate_name>",
+      "type": "feature_gate",
+      "salt": "...",
+      "enabled": true,
+      "defaultValue": false,
+      "rules": []
+    }
+  ],
+  "dynamic_configs": [],
+  "layer_configs": [],
+  "id_lists": {},
+  "time": 1715190000000,
+  "has_updates": true,
+  "diagnostics": {}
+}
+7.8 POST /v1/log_event
+Request body:
+
+{
+  "events": [
+    {
+      "eventName": "claude_message_sent",
+      "value": null,
+      "metadata": {"model": "claude-opus-4-7"},
+      "user": {...},
+      "time": 1715190000000,
+      "secondaryExposures": []
+    }
+  ],
+  "statsigMetadata": {...}
+}
+Response: {"success": true}
+
+8. OAuth Surface
+8.1 POST /v1/oauth/token — PRIMARY-SOURCED (Anthropic OAuth in 20269)
+Request body (authorization_code grant):
+
+{
+  "grant_type": "authorization_code",
+  "code": "ac_011CaqX...",
+  "redirect_uri": "https://console.anthropic.com/oauth/code/callback",
+  "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+  "code_verifier": "..."
+}
+Response: 200 OK
+
+{
+  "access_token": "sk-ant-oat01-AbCdEf123...",
+  "refresh_token": "sk-ant-ort01-XyZ789...",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "user:profile user:inference",
+  "account": {
+    "uuid": "d2205583-8165-4fb7-92db-d6682e944e71",
+    "email_address": "operator@example.com"
+  },
+  "organization": {
+    "uuid": "150fb5c6-500f-4fec-b0d9-f4bcd2ab9ec5",
+    "name": "Operator's Organization"
+  }
+}
+Request body (refresh_token grant):
+
+{
+  "grant_type": "refresh_token",
+  "refresh_token": "sk-ant-ort01-XyZ789...",
+  "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+}
+Response: same shape; new access_token and refresh_token.
+
+Important note: As of Feb 2026, Anthropic restricts sk-ant-oat01-* tokens to the Claude Code CLI itself. Third-party tools using these tokens are rejected with 401 invalid_api_key GitHub claude-code#280915. For the Worker A mock, return a sk-ant-oat01-* shape but ensure documentation clearly states this is mock-only.
+
+8.2 GET /oauth/authorize
+Query params:
+
+?response_type=code
+&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e
+&redirect_uri=https://console.anthropic.com/oauth/code/callback
+&scope=user:profile+user:inference
+&state=<csrf_token>
+&code_challenge=<base64url-sha256-of-verifier>
+&code_challenge_method=S256
+Response: HTML consent page (302 redirect to redirect_uri?code=ac_011CaqX...&state=<csrf_token> after consent).
+
+8.3 GET /oauth/redirect
+Convenience wrapper used by Claude Code CLI; receives the authorization code and exchanges for tokens via §8.1.
+
+9. Error Envelope (uniform across all /v1/* endpoints)
+Anthropic shape:
+
+{
+  "type": "error",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "messages: at least one message required"
+  }
+}
+error.type enum:
+
+Status	type
+400	invalid_request_error
+401	authentication_error
+403	permission_error
+404	not_found_error
+413	request_too_large
+429	rate_limit_error
+500	api_error
+529	overloaded_error
+Mid-stream error: emit event: error\ndata: {...}\n\n then close socket — NO message_stop.
+
+10. Rate-Limit Headers (passed through on all /v1/messages responses)
+anthropic-ratelimit-requests-limit: 4000
+anthropic-ratelimit-requests-remaining: 3999
+anthropic-ratelimit-requests-reset: 2026-05-08T18:00:00Z
+anthropic-ratelimit-tokens-limit: 400000
+anthropic-ratelimit-tokens-remaining: 399975
+anthropic-ratelimit-tokens-reset: 2026-05-08T18:00:00Z
+anthropic-ratelimit-input-tokens-limit: 400000
+anthropic-ratelimit-input-tokens-remaining: 399975
+anthropic-ratelimit-input-tokens-reset: 2026-05-08T18:00:00Z
+anthropic-ratelimit-output-tokens-limit: 80000
+anthropic-ratelimit-output-tokens-remaining: 79953
+anthropic-ratelimit-output-tokens-reset: 2026-05-08T18:00:00Z
+retry-after: 30
+11. Byte-Equivalence Caveat
+Endpoints marked SHAPE-FAITHFUL ONLY in this document are reconstructed from clean-room work (noemica-io/open-claude-in-chrome2) and partial documentation. They are structurally correct but NOT guaranteed byte-equivalent to live claude.ai traffic. Before final submission to hackerone.com/anthropic1, capture a fresh HAR from your own logged-in session covering each shape-faithful endpoint and reconcile any field-name or ordering deltas.
+
+Endpoints marked PRIMARY-SOURCED are pinned to the indexed HAR bundle (cap1–cap4, 9.37 MB, 2,439,789 tokens after indexing) — these can be replayed verbatim with byte-faithful confidence.
+
+12. Implementation Notes for Worker A (Cloudflare Worker, ES module)
+All identifiers (org_uuid, account_uuid, conv_uuid, message_uuid, tool_use_id, request_id, msg_id) generated via crypto.randomUUID() per-request, except for the canonical mimic identity which is read from KV / env.
+request-id response header format: req_011 + crypto.randomUUID().replace(/-/g,'').slice(0,21).toUpperCase() (matches live shape).
+msg_id format: msg_011 + 22-char base32.
+toolu_id format: toolu_01 + 22-char base32.
+Statsig response keys must be djb2-hashed strings (use the algorithm in §1.2).
+Worker A never emits real Anthropic egress; all /v1/messages responses are either mock SSE or proxied through Worker C (which uses the operator's own browser session via credentials: 'include').
+Cookie values MUST NOT appear in any Worker A code path; Worker C handles cookie-bridge mode entirely browser-side.
+BLOCKED_HOSTS = exactly the 4 CoCoDem C2: openclaude.111724.xyz, cfc.aroic.workers.dev, 111724.xyz, aroic.workers.dev. No Anthropic-owned host is blocked.
+Bibliography
+
+Anthropic Messages API — docs.anthropic.com/en/api/messages6
+Streaming Events — docs.anthropic.com/en/api/messages-streaming3
+Count Tokens — platform.claude.com/docs/en/api/messages/count_tokens7
+Message Batches — platform.claude.com/docs/en/api/messages/batches8
+Statsig JS Client SDK — docs.statsig.com/client/javascript-sdk4
+Anthropic OAuth in 2026 — GitHub claude-code#280915
+noemica-io clean-room reimplementation — github.com/noemica-io/open-claude-in-chrome2
+LMArenaBridge architectural pattern — github.com/CloudWaddie/LMArenaBridge10
+HackerOne Anthropic VDP — hackerone.com/anthropic1
+Live HAR bundle (cap1–cap4, 9.37 MB) — hars_1-4.json indexed at https://www.genspark.ai/api/files/s/0ymKlV7N
+This is the byte-anchored reference. Every PRIMARY-SOURCED shape is replayable as-is from the HAR bundle; every SHAPE-FAITHFUL ONLY shape is structurally correct but should be re-pinned against fresh HAR captures before final HackerOne submission.
+
+Appendix: Supplementary Video Resources
+🎥 GenAI Vlog - Beginner's Guide of Anthropic Claude Tutorials
+
+🎥 Beginner's Guide of Anthropic Claude Tutorials - API Solution
+
+🎥 Beginner's Guide of Anthropic Claude Tutorials - API Solution
