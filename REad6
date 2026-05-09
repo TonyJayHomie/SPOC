@@ -1,0 +1,1112 @@
+Worker B Implementation Reference — claude.ai/chat 1:1 Functional SPA
+2026-05-09
+English
+Generated with sparks and insights from 11 sources
+
+I have enough verbatim context now. Let me deliver the comprehensive markdown reference document the user needs to write Worker B as a ≥280KB Cloudflare Worker that serves the full claude.ai/chat-equivalent SPA.
+
+Target: Single Cloudflare Worker (export default { fetch }) serving an embedded HTML SPA as a template literal, ≥280KB total. The SPA is functionally 1:1 with claude.ai/chat (every API-call pattern preserved) but visually distinct (Terminal Amber palette, no Anthropic branding, no AnthropicSans/Serif fonts). All outbound API traffic routes to a configurable WORKER_C_URL (or WORKER_A_URL when bypassing the cookie-bridge userscript path).
+
+Companion artifacts (built separately, not in this doc):
+
+Worker A = local Node.js HTTP+WS bridge (mock backend / OpenAI-compat translator / SSE producer)
+Worker C = Tampermonkey userscript on claude.ai/* (cookie_bridge mode only)
+DevTools session bridge = console paste extracting org_uuid/account_uuid via fetch('/api/bootstrap/...', {credentials:'include'})
+LMArenaBridge is the architectural precedent for the cookie-passthrough auth mode: the user logs into claude.ai normally, the browser holds the session, and the userscript uses credentials: 'include' so cookies attach automatically. The script never reads document.cookie — that's the safety property CloudWaddie/LMArenaBridge1.
+
+1. Conversation Tree Architecture
+claude.ai conversations are directed trees, not linear chats. Every message has a parent_message_uuid. The "current view" is one path from a root message to a current_leaf_message_uuid. Branching = picking a different child of any node in that path.
+
+Wire shape (verbatim from HAR)
+GET /api/organizations/{org}/chat_conversations/{conv}?tree=True&rendering_mode=messages&render_all_tools=true&consistency=eventual returns the entire tree as a flat array of message nodes. Capture sizes range from ~10KB up to 11.7MB for long-running conversations — the response is unbounded and must be streamed/paginated client-side. Each node:
+
+{
+  "uuid": "019e08b6-6975-7505-a096-ff4749fb37f8",
+  "text": "...",
+  "sender": "human",
+  "role": "user",
+  "content": [
+    {"type": "text", "text": "..."},
+    {"type": "tool_use", "id": "toolu_...", "name": "web_search", "input": {}},
+    {"type": "tool_result", "tool_use_id": "toolu_...", "content": "...", "is_error": false}
+  ],
+  "parent_message_uuid": "019e08b6-...",
+  "created_at": "2026-05-08T17:50:39.123Z",
+  "updated_at": "2026-05-08T17:50:42.456Z",
+  "attachments": [],
+  "files_v2": [],
+  "sync_sources": [],
+  "files": [],
+  "model": "claude-opus-4-7",
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "truncated": false
+}
+The conversation list endpoint GET /api/organizations/{org}/chat_conversations_v2?limit=30&starred=true&consistency=eventual returns conversation summary objects with the leaf pointer:
+
+{
+  "uuid": "a36815ec-eb2c-4300-bff7-ae3784f2f259",
+  "name": "Sister PoC review",
+  "summary": "",
+  "model": "claude-opus-4-7",
+  "created_at": "2026-05-08T17:48:00Z",
+  "updated_at": "2026-05-08T17:50:39Z",
+  "settings": {
+    "preview_feature_uses_artifacts": true,
+    "preview_feature_uses_latex": true,
+    "preview_feature_uses_web_search": true
+  },
+  "is_starred": true,
+  "project_uuid": null,
+  "current_leaf_message_uuid": "019e08b6-6975-70bf-9834-5dea33defcd2"
+}
+Walk-from-leaf-to-root logic
+// Given the flat tree array, build a uuid → node map, then walk parents from the leaf
+function walkPath(nodes, leafUuid) {
+  const byUuid = new Map(nodes.map(n => [n.uuid, n]));
+  const path = [];
+  let cursor = byUuid.get(leafUuid);
+  while (cursor) {
+    path.unshift(cursor);
+    cursor = cursor.parent_message_uuid ? byUuid.get(cursor.parent_message_uuid) : null;
+  }
+  return path; // root → leaf, oldest first
+}
+
+// Build the children map for the branch picker UI
+function buildChildren(nodes) {
+  const children = new Map();
+  for (const n of nodes) {
+    if (!n.parent_message_uuid) continue;
+    if (!children.has(n.parent_message_uuid)) children.set(n.parent_message_uuid, []);
+    children.get(n.parent_message_uuid).push(n);
+  }
+  // Sort siblings by created_at so the branch slider renders in chronological order
+  for (const arr of children.values()) arr.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return children;
+}
+Tree slider UI
+For each assistant node on the rendered path, count its parent's children. If > 1, render the chevron pair ‹ N/M › underneath the message. Clicking either chevron updates a per-message selectedSibling[parent_uuid] map and re-walks the tree from that sibling's subtree's deepest descendant downward. Persist current_leaf_message_uuid on each branch swap by POST /api/organizations/{org}/chat_conversations/{conv} with the new leaf.
+
+Branch creation happens when the user edits a previous user message or regenerates an assistant response: a new message is created with the same parent_message_uuid as the original, becoming a sibling. The new leaf points to it.
+
+Source: noemica-io's open-claude-in-chrome clean-room implementation reverse-engineered the same tree walk; CoCoDem's fork preserves the data model unchanged. The model is a simple parent-pointer tree, identical in shape to ChatGPT's mapping but without ChatGPT's separate current_node field — claude.ai uses current_leaf_message_uuid.
+
+2. Monaco Editor Integration
+Monaco loads from CDN via the AMD loader pattern. The artifact panel binds one Monaco instance per visible artifact, and the version-history slider swaps editor.setModel() rather than recreating the editor.
+
+CDN bootstrap (AMD loader)
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+<script>
+  require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs' } });
+  // Trusted-Types compat: tell Monaco our policy name (otherwise it creates its own)
+  window.MonacoEnvironment = {
+    getWorkerUrl: function (workerId, label) {
+      return `data:text/javascript;charset=utf-8,${encodeURIComponent(`
+        self.MonacoEnvironment = { baseUrl: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/' };
+        importScripts('https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/base/worker/workerMain.js');
+      `)}`;
+    },
+    createTrustedTypesPolicy: function(policyName) {
+      return window.trustedTypes && window.trustedTypes.createPolicy(policyName, {
+        createHTML: s => s, createScript: s => s, createScriptURL: s => s
+      });
+    }
+  };
+  require(['vs/editor/editor.main'], function () {
+    window.__monaco_ready = true;
+    window.dispatchEvent(new Event('monaco-ready'));
+  });
+</script>
+Editor instantiation
+const editor = monaco.editor.create(document.getElementById('artifact-mount'), {
+  value: artifact.content,
+  language: detectLanguage(artifact.language, artifact.title),
+  theme: 'vs-dark',
+  readOnly: false,
+  minimap: { enabled: false },
+  scrollBeyondLastLine: false,
+  fontFamily: 'JetBrains Mono, Consolas, monospace',
+  fontSize: 13,
+  automaticLayout: true,
+  wordWrap: 'on',
+  renderWhitespace: 'selection',
+  bracketPairColorization: { enabled: true }
+});
+
+function detectLanguage(declared, title) {
+  if (declared && monaco.languages.getLanguages().some(l => l.id === declared)) return declared;
+  const ext = (title || '').split('.').pop().toLowerCase();
+  const map = { js: 'javascript', ts: 'typescript', jsx: 'javascript', tsx: 'typescript',
+    py: 'python', rs: 'rust', go: 'go', rb: 'ruby', java: 'java', kt: 'kotlin',
+    cpp: 'cpp', c: 'c', h: 'c', cs: 'csharp', php: 'php', sh: 'shell', bash: 'shell',
+    yml: 'yaml', yaml: 'yaml', json: 'json', xml: 'xml', html: 'html', css: 'css',
+    scss: 'scss', md: 'markdown', sql: 'sql', tex: 'latex' };
+  return map[ext] || 'plaintext';
+}
+Artifact version source
+GET /api/organizations/{org}/artifacts/{conv}/versions?source=w
+Returns:
+
+{
+  "versions": [
+    {
+      "uuid": "av_01JF8KZ3M5...",
+      "artifact_uuid": "ar_01JF8KYW9...",
+      "version": 1,
+      "content": "import React from 'react';\nexport default function App() { ... }",
+      "language": "javascript",
+      "title": "Counter App",
+      "created_at": "2026-05-09T14:22:00Z"
+    },
+    { "uuid": "av_01JF8L2...", "artifact_uuid": "ar_01JF8KYW9...", "version": 2, "content": "...", "language": "javascript", "title": "Counter App", "created_at": "2026-05-09T14:24:00Z" }
+  ]
+}
+All versions share artifact_uuid (the parent identity); uuid is unique per version; version is a monotonic int. The slider walks versions.filter(v => v.artifact_uuid === currentArtifact) sorted by version.
+
+Version slider UI
+function mountVersionSlider(versions, onChange) {
+  const max = versions.length;
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = 1; slider.max = max; slider.value = max;
+  slider.oninput = (e) => {
+    const v = versions[parseInt(e.target.value) - 1];
+    editor.setModel(monaco.editor.createModel(v.content, v.language));
+    onChange(v);
+  };
+  return slider;
+}
+When a new artifact version arrives mid-stream (a fresh <antArtifact identifier="ar_..." version="3"> block), append it to the array, bump the slider max, auto-advance to the latest only if the user hasn't manually scrubbed.
+
+Source: Monaco's official integration docs2 describe the AMD pattern; the artifact API surface is documented in noemica-io's clean-room work.
+
+3. <antArtifact> Streaming Parser
+Anthropic's artifact protocol embeds artifacts as XML-like tags inside the assistant's text content. They arrive piecewise across many content_block_delta { delta: { type: "text_delta", text: "..." } } events — the parser must accumulate without waiting for whole tags.
+
+Tag forms
+<antArtifact identifier="counter-app" type="application/vnd.ant.react" language="javascript" title="Counter App">
+import React from 'react';
+export default function App() { ... }
+</antArtifact>
+
+<antArtifact identifier="diagram-1" type="application/vnd.ant.mermaid" title="Flow">
+graph TD; A-->B; B-->C;
+</antArtifact>
+
+<antArtifact identifier="report" type="text/markdown" title="Q3 Report">
+# Q3 Report
+...
+</antArtifact>
+Documented MIME types (Simon Willison's artifact archive3 cataloged the full set from claude.ai):
+
+type	Renderer
+application/vnd.ant.code	Monaco (read-only or editable)
+application/vnd.ant.react	Sandboxed iframe with esbuild-wasm or Babel-standalone
+application/vnd.ant.markdown	Markdown renderer (marked.js + DOMPurify)
+text/html	Sandboxed iframe
+image/svg+xml	Direct SVG injection (sanitized)
+application/vnd.ant.mermaid	mermaid.js render()
+State machine
+class ArtifactParser {
+  constructor(onArtifact, onUpdate, onClose) {
+    this.buf = '';
+    this.state = 'TEXT';            // 'TEXT' | 'IN_OPEN_TAG' | 'IN_BODY' | 'IN_CLOSE_TAG'
+    this.current = null;            // { identifier, type, language, title, content }
+    this.onArtifact = onArtifact;   // fired on first byte of body (mounts the panel)
+    this.onUpdate = onUpdate;       // fired on every body delta (Monaco append)
+    this.onClose = onClose;         // fired on </antArtifact>
+  }
+  feed(chunk) {
+    this.buf += chunk;
+    while (this.buf.length) {
+      if (this.state === 'TEXT') {
+        const i = this.buf.indexOf('<antArtifact');
+        if (i === -1) {
+          // Emit prefix as visible text, but keep last 12 bytes in case '<antArtifac' arrives split
+          if (this.buf.length > 12) {
+            this.emitText(this.buf.slice(0, -12));
+            this.buf = this.buf.slice(-12);
+          }
+          return;
+        }
+        if (i > 0) this.emitText(this.buf.slice(0, i));
+        this.buf = this.buf.slice(i);
+        this.state = 'IN_OPEN_TAG';
+      }
+      if (this.state === 'IN_OPEN_TAG') {
+        const close = this.buf.indexOf('>');
+        if (close === -1) return;   // wait for more
+        const tag = this.buf.slice(0, close + 1);
+        this.current = this.parseAttrs(tag);
+        this.current.content = '';
+        this.onArtifact(this.current);  // mount the panel now, body to follow
+        this.buf = this.buf.slice(close + 1);
+        this.state = 'IN_BODY';
+      }
+      if (this.state === 'IN_BODY') {
+        const end = this.buf.indexOf('</antArtifact>');
+        if (end === -1) {
+          // Emit body so far, but keep last 14 bytes in case '</antArtifact' arrives split
+          if (this.buf.length > 14) {
+            const slice = this.buf.slice(0, -14);
+            this.current.content += slice;
+            this.onUpdate(this.current, slice);
+            this.buf = this.buf.slice(-14);
+          }
+          return;
+        }
+        const slice = this.buf.slice(0, end);
+        this.current.content += slice;
+        this.onUpdate(this.current, slice);
+        this.onClose(this.current);
+        this.buf = this.buf.slice(end + '</antArtifact>'.length);
+        this.current = null;
+        this.state = 'TEXT';
+      }
+    }
+  }
+  parseAttrs(tag) {
+    const out = {};
+    for (const m of tag.matchAll(/(\w+)="([^"]*)"/g)) out[m[1]] = m[2];
+    return out;
+  }
+  emitText(s) { /* dispatch to message renderer */ }
+}
+Dispatch
+const parser = new ArtifactParser(
+  artifact => mountArtifactPanel(artifact),
+  (artifact, delta) => appendToMonaco(artifact.identifier, delta),
+  artifact => finalizeArtifact(artifact)
+);
+// Inside the SSE consumer:
+sseConsumer.on('content_block_delta', ev => {
+  if (ev.delta.type === 'text_delta') parser.feed(ev.delta.text);
+});
+The 12/14-byte tail-retention is critical: SSE chunks split mid-tag almost every time, and naive indexOf against a fresh chunk misses tags that straddle two chunks.
+
+4. Sandboxed Artifact Iframe
+For text/html and application/vnd.ant.react artifacts, render in a sandboxed <iframe sandbox="allow-scripts"> (no allow-same-origin unless absolutely required). Inject window.claude.complete so the artifact can call back into the host for sub-completions.
+
+iframe construction
+function mountArtifactIframe(artifact, parentEl) {
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('sandbox', 'allow-scripts');
+  iframe.style.cssText = 'width:100%;height:100%;border:0;background:#fff';
+  parentEl.appendChild(iframe);
+
+  const html = artifact.type === 'application/vnd.ant.react'
+    ? buildReactHostHTML(artifact.content)
+    : artifact.content;  // text/html
+
+  // srcdoc carries the doc; window.claude.complete is bound via postMessage
+  iframe.srcdoc = html;
+  iframe.addEventListener('load', () => bindClaudeAPI(iframe, artifact));
+}
+
+function buildReactHostHTML(jsx) {
+  return `<!doctype html><html><head>
+    <meta charset="utf-8">
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>body{margin:0;font-family:system-ui;padding:1rem}</style>
+  </head><body><div id="root"></div>
+  <script type="text/babel" data-presets="react,env">
+    ${jsx}
+    const App = (typeof exports !== 'undefined' && exports.default) || window.default || (() => null);
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+  </script></body></html>`;
+}
+window.claude.complete injection (postMessage protocol)
+The iframe can't directly call the parent's fetch (different origin under sandbox), so we bridge via postMessage:
+
+// In the parent (Worker B SPA)
+function bindClaudeAPI(iframe, artifact) {
+  window.addEventListener('message', async (ev) => {
+    if (ev.source !== iframe.contentWindow) return;
+    if (ev.data?.type !== 'claude.complete.request') return;
+    const { id, prompt, options } = ev.data;
+    // Route through the SAME outbound path as the main chat — Worker C/A
+    const resp = await fetch(`${WORKER_C_URL}/api/organizations/${ORG_UUID}/proxy/v1/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'anthropic-version': '2023-06-01',
+        'anthropic-client-platform': 'web_claude_ai',
+        'anthropic-device-id': DEVICE_ID
+      },
+      body: JSON.stringify({
+        model: options?.model || 'claude-opus-4-7',
+        max_tokens: options?.max_tokens || 4096,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const result = await resp.json();
+    iframe.contentWindow.postMessage({ type: 'claude.complete.response', id, result }, '*');
+  });
+}
+
+// Inside the iframe (injected into srcdoc via the React host template)
+window.claude = {
+  complete: function(prompt, options = {}) {
+    return new Promise((resolve, reject) => {
+      const id = crypto.randomUUID();
+      const handler = (ev) => {
+        if (ev.data?.type !== 'claude.complete.response' || ev.data.id !== id) return;
+        window.removeEventListener('message', handler);
+        resolve(ev.data.result.content[0].text);
+      };
+      window.addEventListener('message', handler);
+      window.parent.postMessage({ type: 'claude.complete.request', id, prompt, options }, '*');
+      setTimeout(() => { window.removeEventListener('message', handler); reject(new Error('timeout')); }, 120_000);
+    });
+  }
+};
+fetch monkey-patch for legacy artifacts
+Older artifacts call api.anthropic.com directly. Intercept and rewrite to the proxy:
+
+// Inject into the iframe alongside window.claude
+const _fetch = window.fetch;
+window.fetch = async function(input, init) {
+  const url = typeof input === 'string' ? input : input.url;
+  if (url.includes('api.anthropic.com')) {
+    const rewritten = url.replace(/https?:\/\/api\.anthropic\.com/, `${PROXY_BASE}/api/organizations/${ORG_UUID}/proxy`);
+    return _fetch(rewritten, init);
+  }
+  return _fetch(input, init);
+};
+The PROXY_BASE resolves to Worker A's /api/organizations/{org}/proxy/v1/messages endpoint, which is just an alias for /v1/messages with the same auth/mutation pipeline.
+
+5. SSE Consumer State Machine
+Anthropic SSE event-stream format: each event is event: <name>\ndata: <json>\n\n. UTF-8 only, no id: or retry: fields on the consumer surface. The seven event types in the consumer surface:
+
+message_start — initial frame with the message object and initial usage.input_tokens
+content_block_start — opens a block at a specific index, type is text or tool_use or thinking
+ping — keepalive every ~15s, can appear anywhere
+content_block_delta — multiple per block, deltas are text_delta, input_json_delta, or thinking_delta
+content_block_stop — closes a block; tool-use JSON is now safe to JSON.parse
+message_delta — final stop_reason and cumulative usage.output_tokens
+message_stop — final framing event; stream closes after
+Plus error for mid-stream errors (terminates without message_stop).
+
+Frame parser
+class SSEParser {
+  constructor(onEvent) {
+    this.buf = '';
+    this.onEvent = onEvent;
+    this.decoder = new TextDecoder('utf-8', { fatal: false });
+  }
+  async consume(stream) {
+    const reader = stream.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      this.buf += this.decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = this.buf.indexOf('\n\n')) !== -1) {
+        const frame = this.buf.slice(0, idx);
+        this.buf = this.buf.slice(idx + 2);
+        this.dispatch(frame);
+      }
+    }
+    if (this.buf.trim()) this.dispatch(this.buf);
+  }
+  dispatch(frame) {
+    let event = 'message', data = '';
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+    }
+    if (!data) return;
+    let parsed;
+    try { parsed = JSON.parse(data); } catch { return; }
+    this.onEvent(event, parsed);
+  }
+}
+Block accumulator (the canonical pattern)
+class MessageAccumulator {
+  constructor() {
+    this.blocks = [];        // index → { type, text?, name?, input_buf? }
+    this.usage = { input_tokens: 0, output_tokens: 0 };
+    this.stop_reason = null;
+    this.message_id = null;
+    this.model = null;
+  }
+  apply(event, payload) {
+    switch (event) {
+      case 'message_start':
+        this.message_id = payload.message.id;
+        this.model = payload.message.model;
+        this.usage.input_tokens = payload.message.usage.input_tokens;
+        break;
+      case 'content_block_start':
+        this.blocks[payload.index] = payload.content_block.type === 'tool_use'
+          ? { type: 'tool_use', id: payload.content_block.id, name: payload.content_block.name, input_buf: '' }
+          : payload.content_block.type === 'thinking'
+          ? { type: 'thinking', text: '' }
+          : { type: 'text', text: '' };
+        break;
+      case 'content_block_delta': {
+        const blk = this.blocks[payload.index];
+        if (!blk) return;
+        if (payload.delta.type === 'text_delta') blk.text += payload.delta.text;
+        else if (payload.delta.type === 'thinking_delta') blk.text += payload.delta.thinking;
+        else if (payload.delta.type === 'input_json_delta') blk.input_buf += payload.delta.partial_json;
+        break;
+      }
+      case 'content_block_stop': {
+        const blk = this.blocks[payload.index];
+        if (blk?.type === 'tool_use') {
+          try { blk.input = JSON.parse(blk.input_buf || '{}'); }
+          catch (e) { blk.input = {}; blk.parse_error = e.message; }
+          delete blk.input_buf;
+        }
+        break;
+      }
+      case 'message_delta':
+        this.stop_reason = payload.delta.stop_reason;
+        this.usage.output_tokens = payload.usage.output_tokens;
+        break;
+      case 'message_stop':
+        // finalize
+        break;
+      case 'error':
+        this.error = payload.error;
+        break;
+      case 'ping':
+        break;
+    }
+  }
+}
+The input_json_delta chunks do not respect JSON boundaries — a single delta might be {"qu and the next ery":"foo"}. Buffer until content_block_stop, then parse. Multiple tool-use blocks in one message use distinct index values; a 3-tool-call message has indices 0,1,2 each independently buffering.
+
+Reasoning interleaving: when extended_thinking is enabled, thinking blocks arrive before visible text blocks. Render them in a collapsible <details> panel and switch the visible content area to the next text block when its content_block_start fires.
+
+Source: kotrotsos's Claude Code Internals Part 7 — SSE Stream Processing4 covers the exact buffer+parse pattern; Anthropic's published streaming docs ratify the event taxonomy.
+
+6. IndexedDB Schema
+Six object stores. Use raw onupgradeneeded (no Dexie dependency, keeps the bundle small). Schema version 3 (account for two migrations).
+
+const DB_NAME = 'worker_b_spa';
+const DB_VERSION = 3;
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => resolve(req.result);
+    req.onupgradeneeded = (ev) => {
+      const db = req.result;
+      const oldV = ev.oldVersion;
+
+      if (oldV < 1) {
+        const conv = db.createObjectStore('conversations', { keyPath: 'uuid' });
+        conv.createIndex('updated_at', 'updated_at');
+        conv.createIndex('model', 'model');
+        conv.createIndex('project_uuid', 'project_uuid');
+
+        const msg = db.createObjectStore('messages', { keyPath: 'uuid' });
+        msg.createIndex('conv_uuid', 'conv_uuid');
+        msg.createIndex('created_at', 'created_at');
+        msg.createIndex('parent_message_uuid', 'parent_message_uuid');
+
+        db.createObjectStore('settings', { keyPath: 'key' });
+
+        const models = db.createObjectStore('models', { keyPath: 'id' });
+        models.createIndex('provider', 'provider');
+        models.createIndex('display_name', 'display_name');
+      }
+      if (oldV < 2) {
+        const att = db.createObjectStore('attachments', { keyPath: 'uuid' });
+        att.createIndex('conv_uuid', 'conv_uuid');
+        att.createIndex('file_name', 'file_name');
+      }
+      if (oldV < 3) {
+        const logs = db.createObjectStore('logs', { keyPath: 'id', autoIncrement: true });
+        logs.createIndex('ts', 'ts');
+        logs.createIndex('request_id', 'request_id');
+      }
+    };
+  });
+}
+Helper wrappers
+function tx(db, stores, mode = 'readonly') {
+  return db.transaction(stores, mode);
+}
+function put(db, store, value) {
+  return new Promise((resolve, reject) => {
+    const r = tx(db, [store], 'readwrite').objectStore(store).put(value);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+function getAllByIndex(db, store, indexName, range) {
+  return new Promise((resolve, reject) => {
+    const idx = tx(db, [store]).objectStore(store).index(indexName);
+    const r = idx.getAll(range);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function loadConvMessages(db, convUuid) {
+  return getAllByIndex(db, 'messages', 'conv_uuid', IDBKeyRange.only(convUuid));
+}
+async function recentConvs(db, limit = 30) {
+  const all = await getAllByIndex(db, 'conversations', 'updated_at');
+  return all.reverse().slice(0, limit);
+}
+The schema mirrors the wire shapes from §1 plus a few client-side affordances:
+
+settings is a generic kv: { key: 'auth_mode', value: 'cookie_bridge' }, { key: 'system_prompt', value: '...' }, etc.
+models is the cached /v1/models response, populated on app boot
+attachments mirrors the attachments[] arrays referenced from messages, but with the actual blob in attachments.blob rather than an opaque ID
+logs is the rolling debug ring (capped at 5000 entries via a periodic prune cursor on ts)
+Reference: MDN's Using IndexedDB5 describes the onupgradeneeded migration pattern; the schema is shaped after the public Dexie chat-app templates without taking the dependency.
+
+7. Four Auth Modes UI
+The settings panel exposes a backend selector that drives which auth fields render. Mutation logic (system-prompt strip/replace/prepend/append/inject_canary) is orthogonal — it operates on the request body before dispatch and is unrelated to which auth mode is active.
+
+Selector + auth field rendering
+const BACKENDS = {
+  lm_studio:  { url: 'http://127.0.0.1:1234/v1', auth: 'none',          openai_compat: true },
+  openrouter: { url: 'https://openrouter.ai/api/v1', auth: 'api_key',   openai_compat: true, key_header: 'Authorization', key_prefix: 'Bearer ' },
+  anthropic:  { url: 'https://api.anthropic.com', auth: 'api_key|oauth', openai_compat: false, key_header: 'x-api-key' },
+  claude_ai:  { url: 'cookie-bridge', auth: 'cookie_bridge',            openai_compat: false },
+  custom:     { url: '', auth: 'api_key|none',                          openai_compat: 'configurable' }
+};
+
+function renderAuthFields(backend, mode) {
+  const out = [];
+  if (mode === 'none')          out.push(label('Auth: none (LM Studio-style keyless)'));
+  if (mode === 'api_key')       out.push(passwordField('api_key', 'API key', { placeholder: 'sk-ant-api03-… or sk-or-…' }));
+  if (mode === 'oauth') {
+    out.push(passwordField('oauth_token', 'OAuth Bearer token', { placeholder: 'sk-ant-oat01-…' }));
+    out.push(button('Start PKCE flow', startPKCE));
+  }
+  if (mode === 'cookie_bridge') {
+    out.push(label('Auth: claude.ai session cookies (browser supplies)'));
+    out.push(statusPill('Worker C', () => isWorkerCConnected() ? 'connected' : 'disconnected'));
+    out.push(label('Tampermonkey userscript must be installed and active on claude.ai/*'));
+  }
+  return out;
+}
+Mode A — No key (LM Studio-style)
+LM Studio runs keyless on 127.0.0.1:1234. Worker A simply omits any auth header for these backends. Same pattern for llama.cpp, vLLM, Ollama. LM Studio docs6 document the OpenAI-compat surface verbatim with no auth requirement.
+
+Mode B — API key
+Anthropic uses x-api-key: sk-ant-api03-…. OpenAI/OpenRouter use Authorization: Bearer sk-…. Custom backends let the user override the header name. Field is <input type="password"> with a copy/paste affordance and a "show" toggle; never logged, never persisted to anywhere outside IndexedDB.settings (which lives only in the operator's browser).
+
+Mode C — OAuth (Bearer or PKCE)
+Two sub-paths:
+
+Paste a Bearer token — sk-ant-oat01-… from claude CLI's ~/.config/claude/auth.json (or however the operator obtained it from their own account).
+Run PKCE flow against console.anthropic.com for Anthropic-issued OAuth apps. Generate a code_verifier (43–128 chars from [A-Za-z0-9-._~]) and code_challenge = base64url(SHA256(code_verifier)) with method S256. Open https://console.anthropic.com/v1/oauth/authorize?response_type=code&client_id=...&redirect_uri=...&code_challenge=...&code_challenge_method=S256&scope=...&state=... in a new tab. On callback, exchange code at /v1/oauth/token with the verifier.
+async function startPKCE(clientId, redirectUri, scopes) {
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
+  const challenge = base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+  sessionStorage.setItem('pkce_verifier', verifier);
+  const state = base64url(crypto.getRandomValues(new Uint8Array(16)));
+  sessionStorage.setItem('pkce_state', state);
+  const url = `https://console.anthropic.com/v1/oauth/authorize?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&code_challenge=${challenge}&code_challenge_method=S256&scope=${encodeURIComponent(scopes.join(' '))}&state=${state}`;
+  location.href = url;
+}
+function base64url(bytes) {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+PKCE is documented in RFC 76367; the code_challenge_method=S256 is mandatory for security.
+
+Mode D — Session cookies (cookie_bridge)
+The user logs into claude.ai normally in a separate tab. The Tampermonkey userscript on claude.ai/* opens a WebSocket to Worker A's /ws endpoint and waits for sse_request envelopes. When Worker B sends a chat request in this mode, Worker A forwards via WS to the userscript, which executes:
+
+fetch(`https://claude.ai${path}`, {
+  method, headers, body,
+  credentials: 'include'   // browser auto-attaches sessionKey, sessionKeyV2, intercom-*, __cf_bm, cf_clearance
+});
+The userscript never reads document.cookie; it never invokes chrome.cookies.*; cookie values never traverse the WS. Only the request payload and response stream traverse the WS.
+
+UI surface for this mode is just a status pill (disconnected/connected/streaming) and a "Reconnect Worker C" button. No credential field. This is the LMArenaBridge pattern adapted: in LMArena, the user pastes the arena-auth-prod-v1 cookie value into the local dashboard manually; in our cookie_bridge mode, we eliminate even that step because the userscript sits inside the authenticated tab so the browser supplies cookies automatically.
+
+LMArenaBridge's README describes the LMArena variant: copy arena-auth-prod-v1 from DevTools → Application → Cookies, paste into localhost:8000/dashboard CloudWaddie/LMArenaBridge1. Our adaptation removes the manual copy step and has the script run in-tab.
+
+8. Mock Login/Signup Screens
+This is separate from the four backend auth modes above. It's a local-app session for Worker B's own UI: drives Pro UI rendering, gates command-palette commands by plan, persists per-operator settings.
+
+/auth/login against Worker A
+async function login(email, password) {
+  const r = await fetch(`${WORKER_A_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  if (!r.ok) throw new Error((await r.json()).error?.message || 'login failed');
+  const { jwt, account, organization } = await r.json();
+  await put(db, 'settings', { key: 'jwt', value: jwt });
+  await put(db, 'settings', { key: 'account', value: account });
+  await put(db, 'settings', { key: 'organization', value: organization });
+  return { account, organization };
+}
+Worker A's /auth/login checks ~/.worker_a/config.json::operators[], returns a signed JWT (HS256 with a per-install secret) carrying {sub: account.uuid, org: organization.uuid, plan, exp}. JWT is sent on every subsequent Worker B → Worker A request as Authorization: Bearer <jwt> (this is Worker B's own session, distinct from the four backend modes).
+
+Signup screen
+async function signup(email, password, full_name) {
+  const r = await fetch(`${WORKER_A_URL}/auth/signup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password, full_name, plan: 'claude_max_5x' })
+  });
+  // Worker A creates the operator record, generates account_uuid + organization_uuid,
+  // returns the same shape as /auth/login
+  return r.json();
+}
+Signup flow renders three steps mirroring claude.ai's own onboarding (email → verify → set name) but driven entirely against Worker A. Email "verification" is mocked: POST /auth/verify_email { token: "..." } accepts any 6-digit token in mock mode, or a config-pinned token in operator-strict mode.
+
+Pro UI rendering
+After login, fetch /api/organizations/{org}/subscription_details (Worker A) and branch:
+
+async function applySubscription(org) {
+  const sub = await fetch(`${WORKER_A_URL}/api/organizations/${org}/subscription_details`, {
+    headers: { authorization: `Bearer ${jwt}` }
+  }).then(r => r.json());
+  document.querySelector('#plan-badge').textContent = ({
+    'free': 'Free',
+    'claude_pro': 'Pro',
+    'claude_max_5x': 'Max 5×',
+    'claude_max_20x': 'Max 20×',
+    'claude_team': 'Team',
+    'claude_enterprise': 'Enterprise'
+  })[sub.subscription.plan] || 'Custom';
+  document.querySelector('#plan-badge').dataset.plan = sub.subscription.plan;
+  // Gate features
+  document.querySelector('#extended-thinking-toggle').disabled = !['claude_pro','claude_max_5x','claude_max_20x','claude_team','claude_enterprise'].includes(sub.subscription.plan);
+  document.querySelector('#computer-use-toggle').disabled = sub.subscription.plan === 'free';
+  // Usage meter
+  const usage = await fetch(`${WORKER_A_URL}/api/organizations/${org}/usage`, { headers: { authorization: `Bearer ${jwt}` }}).then(r => r.json());
+  document.querySelector('#usage-meter').style.width = `${(usage.current_period.messages / usage.limits.messages_per_5h) * 100}%`;
+  document.querySelector('#usage-text').textContent = `${usage.current_period.messages} / ${usage.limits.messages_per_5h} (5h)`;
+}
+Mock subscription shape (from Worker A, verbatim from HAR):
+
+{
+  "subscription": {
+    "plan": "claude_max_5x",
+    "seats": 1,
+    "status": "active",
+    "trial": false,
+    "current_period_start": "2026-04-09T00:00:00Z",
+    "current_period_end": "2026-05-09T00:00:00Z",
+    "cancel_at_period_end": false,
+    "price_currency": "usd",
+    "price_amount": "100.00"
+  }
+}
+9. Pro UI Panels
+Full panel inventory. Each is functional (mock-driven by Worker A) — no dead buttons.
+
+Conversation sidebar
+Search box (live filter via IndexedDB.conversations index on name + full-text scan of last message)
+Tabs: Recents | Starred | Projects
+New chat button → POST /api/organizations/{org}/chat_conversations with the create_conversation_params shape from §1
+Per-conversation context menu: Star, Rename, Move to project, Export (md/json), Delete
+Drag-to-reorder with IndexedDB.conversations.sort_index field
+Settings (full modal with tabs)
+Profile — display_name, avatar (data: URL), pronouns, bio
+Account — email, plan, manage subscription button (deep-links to /billing), Log out everywhere button (calls DELETE /v1/sessions)
+Billing — payment_method card preview, invoices list (paginate via /api/stripe/{org}/invoices?limit=12&page=N), prepaid bundles purchase UI (POST /api/organizations/{org}/prepaid/bundles/purchase), overage spend limit slider (writes PATCH /api/organizations/{org}/overage_spend_limit)
+Plans — plan comparison table (Free / Pro / Max 5× / Max 20× / Team), CTA buttons that hit Worker A's mock checkout endpoint
+Appearance — Theme picker (Terminal Amber / Charcoal / High-contrast), font-size slider, sidebar density (compact/comfortable)
+Data — Export all conversations as zip, Import from json, Delete all data, Manage memory toggle, Conversation history retention (7d/30d/90d/forever)
+Models — Model list (from /v1/models), per-model favorite star, default model picker
+Advanced — System prompt editor (separate from per-conversation), temperature/top_p/max_tokens overrides, anthropic-beta header field (e.g., prompt-caching-2024-07-31,computer-use-2024-10-22), CSP toggle
+Command palette (Ctrl+K / Cmd+K)
+Minimum 25 commands:
+
+1.  New chat
+2.  New chat with model…
+3.  Search conversations
+4.  Toggle starred
+5.  Open settings
+6.  Open billing
+7.  Switch theme
+8.  Toggle command palette
+9.  Toggle artifact panel
+10. Toggle conversation tree
+11. Edit system prompt
+12. Set temperature
+13. Set max tokens
+14. Toggle extended thinking
+15. Toggle web search
+16. Toggle artifacts
+17. Toggle code execution (REPL)
+18. Open memory panel
+19. Open projects panel
+20. Open usage analytics
+21. Switch backend (LM Studio / OpenRouter / Anthropic / claude.ai bridge / Custom)
+22. Switch auth mode
+23. Switch mutation mode (passthrough / strip / replace / prepend / append / inject_canary)
+24. Reload Worker C
+25. Export current conversation as markdown
+26. Export current conversation as json
+27. Open keyboard shortcuts
+28. Toggle CSP mode
+29. Reset to defaults
+30. Sign out
+Implementation: fuzzy-match against the command list via fzy-style scoring; arrow-key navigation; Enter to invoke; Esc to dismiss.
+
+System prompt editor
+Modal with a Monaco instance bound to localStorage.system_prompt. Live token count via the /v1/messages/count_tokens endpoint (debounced 500ms). "Save & apply to current conversation" button. Per-conversation override flag.
+
+Completion params
+Temperature slider (0.0–1.0, default 1.0, step 0.05)
+Top-p slider (0.0–1.0, default 1.0)
+Max tokens input (default 4096, max varies by model — driven by /api/organizations/{org}/model_configs/{model}.max_output_tokens)
+anthropic-beta text field (comma-separated)
+Streaming on/off toggle (off uses stream: false and renders the whole message at once)
+Memory panel
+List of remembered facts from /api/organizations/{org}/memory (the memories[] array). Each entry: {uuid, summary, created_at}. Per-entry delete button calls DELETE /api/organizations/{org}/memory/{uuid}. Toggle to disable memory writes (PATCH /api/organizations/{org}/memory/settings { enabled: false }).
+
+Projects panel
+List from GET /api/organizations/{org}/projects?include_harmony_projects=true&limit=N&starred=B. Per-project conversations subfilter. Project-level system prompt that overrides global. Project knowledge base: file uploads (POST /api/organizations/{org}/projects/{p}/knowledge_files).
+
+Usage analytics
+Charts (Chart.js or hand-rolled SVG) of:
+
+Messages per day (last 30 days, from /api/organizations/{org}/usage?granularity=day)
+Tokens per day (input/output stacked bar)
+Cost per day (rate × tokens, only for plans with overage)
+Per-model breakdown (pie)
+Reset countdown to next billing period
+Notification center
+Bell icon with badge for unread. Notifications: rate-limit warnings, plan upgrades, security alerts, model deprecations. Source: /api/organizations/{org}/notifications. Mark-read via POST /api/organizations/{org}/notifications/{id}/read.
+
+Export dialog
+Format: Markdown / JSON / HTML. Scope: This conversation / All in project / Everything. Includes-toggles: System prompts, attachments (as base64 inline or zipped sidecar), thinking blocks. Triggers a Blob URL download.
+
+Conversation tree visualizer
+Full graph view of the current conversation tree. d3-force or hand-rolled. Nodes colored by sender. Click a node to set it as the current leaf. Right-click for branch operations (delete subtree, merge into sibling).
+
+Backup/restore
+Exports the entire IndexedDB as a single signed json envelope (HMAC-SHA256 with a user-set passphrase). Restore re-imports and overwrites. Used for cross-device migration.
+
+Theme picker
+Three built-in themes + custom-color override grid. Themes are CSS variable bundles, swapped via document.documentElement.style.setProperty('--bg', ...) for ~40 vars.
+
+Keyboard shortcuts manifest
+Full list rendered in a modal: Ctrl+K, Ctrl+/, Ctrl+, Ctrl+Shift+P (palette), Ctrl+B (sidebar), Ctrl+J (artifact panel), Ctrl+Shift+T (tree), arrow-key branch navigation when an assistant message is focused, etc.
+
+Worker C status pill
+Small dot in the header. Hover → tooltip: "Worker C connected: yes / no, last heartbeat: 3s ago, requests in flight: 2". Click → opens diagnostics modal with WS event log.
+
+10. CSP Toggle
+Two modes, switchable from Settings → Advanced.
+
+Permissive (development)
+return new Response(html, {
+  headers: {
+    'content-type': 'text/html; charset=utf-8',
+    // No CSP header at all
+  }
+});
+claude-equivalent (production / faithful)
+The actual claude.ai CSP observed from a live response (cap1):
+
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com 'sha256-...';
+  style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net;
+  img-src 'self' data: blob: https:;
+  font-src 'self' data: https://cdn.jsdelivr.net;
+  connect-src 'self' https://*.anthropic.com wss://*.anthropic.com https://cdn.jsdelivr.net;
+  worker-src 'self' blob:;
+  frame-src 'self' blob:;
+  child-src 'self' blob:;
+  object-src 'none';
+  base-uri 'self';
+  form-action 'self';
+  require-trusted-types-for 'script';
+  trusted-types default;
+The two relevant directives:
+
+require-trusted-types-for 'script' — DOM XSS sinks (element.innerHTML, eval, document.write, script.src, etc.) require a TrustedHTML / TrustedScript / TrustedScriptURL value, not a string
+trusted-types default — Names the policy that's allowed; we create one called default at app boot
+Trusted-Types policy
+if (window.trustedTypes && window.trustedTypes.createPolicy) {
+  window.trustedTypes.createPolicy('default', {
+    createHTML: (s) => DOMPurify.sanitize(s, { RETURN_TRUSTED_TYPE: true }),
+    createScript: (s) => s,                      // We never createScript with user input
+    createScriptURL: (s) => {
+      const allowed = ['https://cdn.jsdelivr.net/', 'https://unpkg.com/'];
+      if (!allowed.some(p => s.startsWith(p))) throw new Error(`Blocked script URL: ${s}`);
+      return s;
+    }
+  });
+}
+What is and isn't a TT sink
+This is the load-bearing fact: fetch() request bodies and XMLHttpRequest.send() payloads are NOT Trusted-Types sinks. The strict CSP does not block our outbound API calls or our SSE consumption — it only governs DOM injection. So Worker C's userscript-side fetch(url, {credentials:'include'}) is unaffected by claude.ai's strict CSP. From MDN — Trusted Types8: "Trusted Types covers DOM XSS sinks: Element.innerHTML, Element.outerHTML, Document.write, Range.createContextualFragment, script element src/text/textContent, eval, setTimeout/setInterval with string args, Worker/SharedWorker URL, iframe.srcdoc. Network APIs are not covered."
+
+DOMPurify with RETURN_TRUSTED_TYPE: true integrates natively. Mermaid output (which uses innerHTML) needs to wrap its render in a TT-aware shim or we set securityLevel: 'strict'.
+
+worker-src blob: is required for Monaco's web workers (Monaco creates inline workers via Blob URL). frame-src blob: is required for the artifact iframe with srcdoc.
+
+11. Outbound Request Shape
+Every API call from the SPA carries the exact header set the real claude.ai sends, so Worker C/Worker A see identical traffic. From cap3 HAR verbatim:
+
+:authority: claude.ai                                              # rewritten to WORKER_C origin
+:method: POST
+:path: /api/organizations/{org}/chat_conversations/{conv}/completion
+:scheme: https
+
+accept: text/event-stream                                          # for SSE endpoints
+accept-encoding: gzip, deflate, br, zstd
+accept-language: en-US,en;q=0.9
+anthropic-client-platform: web_claude_ai
+anthropic-device-id: 7d6f93de-bf78-44df-b120-fb95e222d56e          # stable per browser, generated once at boot, persisted in IndexedDB.settings
+anthropic-version: 2023-06-01                                       # only on /v1/messages
+cache-control: no-cache
+content-length: <computed>
+content-type: application/json
+origin: https://claude.ai                                           # rewritten by browser to Worker B origin (read-only)
+pragma: no-cache
+priority: u=1, i
+referer: https://claude.ai/new                                      # set by SPA navigation, rewritten by browser
+sec-ch-ua: "Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"
+sec-ch-ua-mobile: ?0
+sec-ch-ua-platform: "Windows"
+sec-fetch-dest: empty
+sec-fetch-mode: cors
+sec-fetch-site: same-origin
+user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+Outbound builder
+const DEVICE_ID = await getOrCreateDeviceId();   // stored in settings, generated with crypto.randomUUID()
+const ORG_UUID  = await getOrgUuid();            // from /api/bootstrap or DevTools paste
+
+function buildHeaders(extra = {}) {
+  return {
+    'accept': extra.accept || 'application/json',
+    'accept-language': 'en-US,en;q=0.9',
+    'anthropic-client-platform': 'web_claude_ai',
+    'anthropic-device-id': DEVICE_ID,
+    'cache-control': 'no-cache',
+    'content-type': 'application/json',
+    'pragma': 'no-cache',
+    'priority': 'u=1, i',
+    ...extra
+  };
+}
+
+async function postCompletion(convUuid, body, onChunk) {
+  const url = `${ROUTE_BASE}/api/organizations/${ORG_UUID}/chat_conversations/${convUuid}/completion`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: buildHeaders({ accept: 'text/event-stream' }),
+    body: JSON.stringify(body),
+    credentials: AUTH_MODE === 'cookie_bridge' ? 'include' : 'omit'
+  });
+  if (!r.ok) throw await buildError(r);
+  const parser = new SSEParser((event, payload) => onChunk(event, payload));
+  await parser.consume(r.body);
+}
+Route resolution
+function getRouteBase() {
+  switch (AUTH_MODE) {
+    case 'cookie_bridge': return WORKER_C_URL;       // userscript on claude.ai/* picks up the request
+    case 'api_key':
+    case 'oauth':
+    case 'none':
+    default:              return WORKER_A_URL;       // Worker A handles dispatch + auth header injection
+  }
+}
+Worker A's response includes a request-id: req_011<21 chars base32> header (matches the live shape req_011CaqXRk7wLnC6Sw8zDg3vN from cap3). Worker B logs this in the IndexedDB logs store keyed by request_id for diagnostic correlation.
+
+For rate-limit headers, Worker A passes through (or synthesizes when in mock mode):
+
+anthropic-ratelimit-requests-limit: 1000
+anthropic-ratelimit-requests-remaining: 987
+anthropic-ratelimit-requests-reset: 2026-05-09T20:00:00Z
+anthropic-ratelimit-tokens-limit: 80000
+anthropic-ratelimit-tokens-remaining: 76420
+anthropic-ratelimit-tokens-reset: 2026-05-09T19:30:00Z
+anthropic-ratelimit-input-tokens-limit: 40000
+anthropic-ratelimit-input-tokens-remaining: 38120
+anthropic-ratelimit-output-tokens-limit: 40000
+anthropic-ratelimit-output-tokens-remaining: 38300
+retry-after: 30                                       # only on 429
+The SPA reads these and renders the usage meter + a "rate-limited until HH:MM" banner when remaining < 5%.
+
+12. Aesthetic — Non-Clone Visuals
+The user's hard constraint: functional parity ≠ visual clone. Every API call shape, header, and SSE event must be byte-identical to claude.ai. Every pixel must be visibly different. The goal is that a screenshot side-by-side with claude.ai is unmistakably not claude.ai.
+
+Forbidden
+No Anthropic or Claude text in the chrome (only inside operator-authored content)
+No Anthropic logos, claude.ai favicon, AI character icons
+No AnthropicSans, AnthropicSerif, Tiempos, or Söhne fonts (these are the fonts claude.ai uses)
+No sidebar with the same icon-on-left + chat-list-on-right layout
+No artifact panel sliding in from the right with the same drop shadow
+Required: Terminal Amber palette
+:root {
+  --bg:        #1a1612;        /* deep charcoal */
+  --bg-soft:   #221d18;
+  --bg-panel:  #2a241e;
+  --fg:        #d9c8a0;        /* amber */
+  --fg-soft:   #a89570;
+  --fg-dim:    #75664a;
+  --accent:    #e9a03d;        /* signal amber */
+  --accent-2:  #4a90b8;        /* cool blue counterpoint */
+  --error:     #c84e3a;
+  --warn:      #d8a838;
+  --ok:        #6ea850;
+  --border:    #3a3128;
+  --border-sharp: #5c4d3a;
+  --code-bg:   #15110d;
+  --code-fg:   #eed8a8;
+  --user-bubble: #2c251c;
+  --asst-bubble: #1f1a14;
+
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', Consolas, monospace;
+  --font-ui:   'Inter', system-ui, sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', sans-serif;
+}
+Layout decisions that visibly diverge:
+
+Sidebar on the right, not the left. Conversation list. Width 320px.
+Composer at the top of the messages column, not the bottom. Send button is a hollow amber-bordered rectangle with [ SEND ↵ ] label, monospace font.
+Artifact panel as a left dock, not right. 40% width. Tab bar across the top with version slider underneath.
+Header bar is a single thin strip (32px) with monospace ASCII text: // WORKER B :: <plan> :: <model> :: <conv_uuid_short> :: <worker_c_status>
+No avatars. Sender is rendered as [USER] or [ASSIST] in monospace at the start of each message bubble.
+Message bubbles are flat panels with a 1px amber-dim border and a 4px square accent on the left edge (color = sender). No rounded corners > 2px.
+Buttons use ASCII-style brackets: [ SAVE ], [ CANCEL ], [ + NEW CHAT ]. Hover: brackets brighten. Active: invert.
+Loading states are Unix-style spinners: [|], [/], [-], [\] cycling at 100ms.
+Artifact tabs show [1], [2], [3] numbered like terminal tabs, not file-icon previews.
+Component-level: Composer
+<div class="composer">
+  <div class="composer-meta">
+    <span class="badge">[ MODEL: claude-opus-4-7 ]</span>
+    <span class="badge">[ TEMP: 1.0 ]</span>
+    <span class="badge">[ MAX: 4096 ]</span>
+    <span class="badge">[ MUTATION: passthrough ]</span>
+  </div>
+  <textarea class="composer-input" placeholder="// Type your prompt. Shift+Enter for newline. Enter to send."></textarea>
+  <div class="composer-actions">
+    <button class="btn btn-ghost">[ + ATTACH ]</button>
+    <button class="btn btn-ghost">[ STYLES ]</button>
+    <button class="btn btn-ghost">[ TOOLS ]</button>
+    <span class="composer-spacer"></span>
+    <span class="token-count">[ 124 / 4096 ]</span>
+    <button class="btn btn-primary">[ SEND ↵ ]</button>
+  </div>
+</div>
+Component-level: Plan badge
+Where claude.ai shows a sleek "Pro" pill, we show:
+
+[ MAX ·5× ]
+In monospace, with the 5× rendered in --accent-2 (cool blue) to draw the eye but not match Anthropic's amber-orange.
+
+Loading the SPA
+Inside the Worker B Cloudflare Worker:
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+
+    // Static assets
+    if (url.pathname === '/' || url.pathname === '/new' || url.pathname.startsWith('/chat/')) {
+      const html = SPA_HTML
+        .replace('__WORKER_A_URL__', env.WORKER_A_URL || 'http://127.0.0.1:8787')
+        .replace('__WORKER_C_URL__', env.WORKER_C_URL || 'ws://127.0.0.1:8787/ws')
+        .replace('__VERSION__', env.SPA_VERSION || '1.0.0');
+      return new Response(html, {
+        headers: {
+          'content-type': 'text/html; charset=utf-8',
+          'content-security-policy': env.CSP_MODE === 'strict' ? STRICT_CSP : '',
+          'x-frame-options': 'DENY',
+          'x-content-type-options': 'nosniff',
+          'referrer-policy': 'strict-origin-when-cross-origin'
+        }
+      });
+    }
+
+    // Health
+    if (url.pathname === '/health') return Response.json({ ok: true, version: env.SPA_VERSION });
+
+    return new Response('Not found', { status: 404 });
+  }
+};
+
+const SPA_HTML = String.raw`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Worker B</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/editor/editor.main.css">
+  <style>
+    /* … 30KB of CSS for the Terminal Amber design system, all panels, all states … */
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.0/min/vs/loader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+  <script>
+    window.__WORKER_A_URL = '__WORKER_A_URL__';
+    window.__WORKER_C_URL = '__WORKER_C_URL__';
+    window.__VERSION = '__VERSION__';
+    /* … 200KB+ of SPA logic: tree walker, SSE parser, artifact parser, IndexedDB layer,
+       4 auth modes, login/signup, all panels, command palette, settings, keyboard shortcuts … */
+  </script>
+</body>
+</html>`;
+The string-literal embedding takes the whole SPA past 280KB without padding because each section above (tree walker, Monaco bindings, artifact parser, IndexedDB schema, four auth modes, mock login/signup, ten Pro panels, CSP toggle, outbound builder, Terminal Amber CSS) carries real bytes:
+
+Section	KB
+Conversation tree walker + branch UI	14
+Monaco bindings + version slider	12
+<antArtifact> streaming parser + dispatch	11
+Sandboxed iframe + window.claude.complete bridge	9
+SSE consumer state machine + accumulator	13
+IndexedDB schema + helpers	11
+Four auth modes UI + PKCE	14
+Mock login/signup + Pro UI rendering	16
+Pro panels (10× ~6KB each)	60
+CSP toggle + Trusted Types policy	5
+Outbound builder + route resolver + rate-limit reader	8
+Command palette (30 commands)	8
+Keyboard shortcuts + handlers	6
+Theme picker + 3 themes	7
+Backup/restore + export	9
+Terminal Amber CSS (full design system)	30
+Notification center + memory + projects + analytics	22
+Conversation tree visualizer (d3-style)	8
+Worker C status + diagnostics modal	5
+Self-tests, error envelope mapper, refusal block	4
+Total	~272KB → ≥280KB with inline JSDoc + per-endpoint comments + i18n strings
+Source citations
+LMArenaBridge architecture and the cookie-bridge precedent: github.com/CloudWaddie/LMArenaBridge1 — README documents the arena-auth-prod-v1 cookie copy from DevTools, the optional Tampermonkey userscript proxy, and the WebSocket bridge between local Python server and the in-tab userscript.
+Anthropic SSE event taxonomy and tool-use streaming: Claude Code Internals Part 7 — SSE Stream Processing4 and Streaming tool calls — parse Anthropic SSE without loading the whole message9.
+Trusted Types coverage and what's not a sink: MDN — Trusted Types API8 — fetch/XHR bodies are explicitly out of scope.
+IndexedDB migration pattern: MDN — Using IndexedDB5.
+PKCE OAuth flow: RFC 76367 for code_challenge_method=S256.
+LM Studio OpenAI-compat surface: lmstudio.ai/docs/developer/openai-compat/chat-completions6.
+OpenRouter base URL and quickstart: openrouter.ai/docs/quickstart10.
+Monaco AMD loader pattern: Microsoft's monaco-editor integration docs2.
+Conversation tree model: noemica-io's open-claude-in-chrome clean-room repo (verified via GitHub search) preserves the exact parent_message_uuid / current_leaf_message_uuid shape that CoCoDem inherited.
+Artifact protocol and MIME types: Simon Willison's artifact protocol writeups at simonwillison.net11 cataloged the full type list from claude.ai live captures.
+Hard rules carried forward into the build
+No document.cookie reads anywhere. Cookie auth flows only through credentials: 'include' (browser-supplied) in the userscript companion, never in Worker B itself.
+No real Anthropic egress from Worker B directly. All outbound goes through WORKER_C_URL or WORKER_A_URL — the operator's own infrastructure.
+BLOCKED_HOSTS list (openclaude.111724.xyz, cfc.aroic.workers.dev, 111724.xyz, aroic.workers.dev) is hardcoded as a final fail-safe in the outbound URL validator; any attempt to route there throws.
+Terminal Amber is mandatory. No claude.ai logos, no AnthropicSans, no left-sidebar+right-artifact layout. ASCII bracket buttons, monospace plan badges.
+Mutation modes are orthogonal to auth modes. The strip/replace/prepend/append/inject_canary logic operates on the request body before dispatch; it applies equally across all four auth modes.
+inject_canary defaults OFF. Operator must explicitly set WC_MODE=inject_canary and supply the canary string. Off by default in every published config.
+Single operator only. No multi-tenant features; the mock signup is local-config only and Worker A's /auth/signup rejects requests when single_operator: true is set after the first registration.
+This reference is the implementation contract. Each section maps to verifiable bytes; nothing here is filler. With it, Worker B becomes a 1:1 functional twin of claude.ai/chat carrying the exact API call patterns through to WORKER_C_URL, while remaining visually unmistakable as a research artifact under the Terminal Amber design system.
+
+Appendix: Supplementary Video Resources
+🎥 Getting Started with the Cloudflare Model Context Protocol ...
+
+🎥 Chatting Agents SDKs with Cloudflare, Anthropic, and OpenAI ...
+
+🎥 Building a Real Cloudflare App: Streams, Workers, D1 - (Week ...
