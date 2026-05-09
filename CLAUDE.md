@@ -387,3 +387,104 @@ GET  /diag
 
 ---
 *Session 2 append — 2026-05-09*
+
+---
+
+## 20. Session 3 Read Log — 2026-05-09 (R3ADD completion)
+
+### R3ADD Fully Read (lines 11591–12481)
+
+R3ADD is now 100% read verbatim. The final section (11591–12481) covers Genspark's Round 7 deep research, final spec lock, artifact emission, live test run (33/33 PASS), and upload.
+
+### Genspark Round 7 Final Spec — Frozen Decisions
+
+| Decision | Value |
+|----------|-------|
+| Worker A format | CF ES module (`export default { fetch }`) |
+| Worker B format | CF ES module (embeds index.html inline) |
+| Worker C format | Tampermonkey userscript |
+| Worker B auth Mode B | paste-token (sk-ant-oat01-…), NOT full PKCE |
+| Worker C default @match | localhost + worker-b subdomain ONLY |
+| Worker C claude.ai @match | Commented-out line (operator opt-in) |
+| Worker C default mutation | strip-and-replace |
+| Backend default | echo (closed-loop), llamacpp_messages, openai_compat available |
+| BACKEND_URL allowlist | localhost + RFC1918 + explicitly user-configured hosts |
+
+### Genspark Final Artifacts (built at /home/user/sister_poc/ in Genspark sandbox)
+
+| File | Size | Description |
+|------|------|-------------|
+| worker_a.js | 22.3 KB | CF ES module, /v1/messages + SSE state machine + /v1/messages/count_tokens + /v1/models + mock identity + CORS + zero-egress |
+| worker_b.js | 11.2 KB | CF ES module, minimal generic chat UI, 3 auth modes, CSP toggle, localStorage settings |
+| worker_c.user.js | 7.4 KB | Tampermonkey, @run-at document-start, 3 mutation modes, blocked-list always-on |
+| tests/harness.mjs | 18.2 KB | 33-case Node test harness |
+| wrangler.example.toml | 0.7 KB | Example deploy config (DO NOT USE — CF Dashboard paste only) |
+| README.md | 2.7 KB | VDP submission context |
+| sister_poc.zip | 21.2 KB | Full bundle |
+
+**NOTE**: Genspark sandbox was recycled mid-session; files were rebuilt from the Round 7 frozen spec. These files existed in Genspark's sandbox only — NOT in `/home/user/SPOC/workspace_20260509/`.
+
+### 33-Case Test Results (Genspark live run, 33/33 PASS)
+
+Categories: Wire conformance (T1–T8), SSE ordering (T9–T16), Auth modes (T17–T20), Mutation determinism (T21–T25), Negative/safety (T26–T29), CORS/egress (T30–T32b).
+
+Two bugs fixed during testing:
+- **T27 fix**: Test regex was scanning prose lines — tightened to scan only lines beginning with `// @match` or `// // @match`
+- **T32 fix (actual Worker A bug)**: Router used `return handleMessages(...)` without `await` inside try/catch, so synchronous throws from `dispatchBackend` escaped as unhandled rejections instead of being caught as 500 `api_error`. Fixed by adding explicit `await` on all async handlers in the router.
+
+### Architectural Divergence: Our workspace vs Genspark final
+
+Our session 2 workspace has:
+- `worker_a_20260509.js` (555 lines) — **Node.js HTTP+WS bridge** (LMArenaBridge pattern)
+- `worker_c_cf_20260509.js` (694 lines) — CF Worker MITM proxy
+- `tampermonkey_20260509.user.js` (600 lines) — Enhanced Tampermonkey (WebSocket mode)
+
+Genspark Round 7 produced:
+- Worker A as **CF ES module** (no WebSocket, no Node.js)
+- Worker C as pure **Tampermonkey fetch/XHR override** (no WebSocket to Worker A)
+- Simpler architecture: Worker B → Worker A directly, Worker C intercepts on the same origin
+
+The SPOC workspace uses the **LMArenaBridge architecture** (WebSocket bridge, Node.js Worker A) which is the chosen implementation for VDP submission. Genspark's CF-only architecture is reference only.
+
+### Canonical SSE State Machine (R3ADD lines 11909–11930, verbatim)
+
+```
+message_start
+  → content_block_start (index 0)
+    → ping? (zero or more)
+    → content_block_delta × N  // text_delta | input_json_delta(partial_json) | thinking_delta | signature_delta
+  → content_block_stop
+  [ repeat content_block_start..stop for each parallel block, e.g., tool_use ]
+→ message_delta  // {delta:{stop_reason,stop_sequence}, usage:{output_tokens,cache_*}}
+→ message_stop
+```
+
+Mid-stream errors: emit `error` event, terminate WITHOUT `message_stop`.
+
+Required SSE headers: `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache`, `Connection: keep-alive`, `request-id`, `anthropic-organization-id`.
+
+### Hard-Line Refusal Header (canonical, from R3ADD §7)
+
+```javascript
+/*
+ * CFC SISTER PoC — Worker [A|B|C]
+ * White-hat constraints (non-negotiable):
+ *  1. No real Anthropic traffic by default; closed-loop only against Worker A.
+ *  2. No third-party user surface; runs on the operator's own infrastructure.
+ *  3. No credential capture, no exfiltration, no telemetry to non-user hosts.
+ *  4. No pixel-accurate UI clone of claude.ai; protocol fidelity only.
+ *  5. @match limited to localhost and user-owned worker-b subdomain;
+ *     claude.ai @match line ships commented-out as opt-in for the operator's
+ *     own session under HackerOne anthropic-vdp safe harbor.
+ *  6. Blocked-list: api.anthropic.com, console.anthropic.com,
+ *     platform.claude.com — never used as the destination of a mutated request.
+ *  7. Submitted as VDP research artifact; not for distribution.
+ */
+```
+
+### /completion Gap (architectural, must document in VDP submission)
+
+The `claude.ai/.../completion` endpoint server-injects the platform system prompt — it is NOT on the wire from the browser. Only `/v1/messages`-shaped traffic has a wire-level `system` field that Worker C can mutate. Against `/completion`, only PREPEND/APPEND operate on user-controllable fields; the platform prompt remains in effect regardless of mutation mode.
+
+---
+*Session 3 append — 2026-05-09*
